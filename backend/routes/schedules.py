@@ -1,6 +1,17 @@
 from flask import Blueprint, request, jsonify
+from utils.db import query_one, query_all
 
 schedules_bp = Blueprint('schedules', __name__)
+
+DAY_LABELS = {
+    0: 'Lunes',
+    1: 'Martes',
+    2: 'Miércoles',
+    3: 'Jueves',
+    4: 'Viernes',
+    5: 'Sábado',
+    6: 'Domingo',
+}
 
 
 @schedules_bp.route('/schedule/weekly', methods=['GET'])
@@ -11,16 +22,50 @@ def get_weekly_schedule():
     if not token:
         return jsonify({'error': 'X-Device-Token header es requerido'}), 401
 
-    # ── Datos simulados (se reemplazará con consulta a BD) ──
-    MOCK_SCHEDULE = [
-        {'day_of_week': 0, 'day_label': 'Lunes',     'start_time': '08:00', 'end_time': '17:00'},
-        {'day_of_week': 1, 'day_label': 'Martes',     'start_time': '08:00', 'end_time': '17:00'},
-        {'day_of_week': 2, 'day_label': 'Miércoles',  'start_time': '08:00', 'end_time': '17:00'},
-        {'day_of_week': 3, 'day_label': 'Jueves',     'start_time': '08:00', 'end_time': '17:00'},
-        {'day_of_week': 4, 'day_label': 'Viernes',    'start_time': '08:00', 'end_time': '17:00'},
-    ]
+    try:
+        # Obtener empleado desde el token
+        device = query_one(
+            """
+            SELECT d.employee_id, e.full_name
+              FROM devices d
+              JOIN employees e ON e.id = d.employee_id
+             WHERE d.device_token = %s
+               AND d.is_active = TRUE
+            """,
+            (token,)
+        )
 
-    return jsonify({
-        'employee': 'Juan Pérez',
-        'schedule': MOCK_SCHEDULE
-    }), 200
+        if not device:
+            return jsonify({'error': 'Dispositivo no válido'}), 401
+
+        # Obtener horarios ordenados por día
+        rows = query_all(
+            """
+            SELECT day_of_week,
+                   to_char(start_time, 'HH24:MI') AS start_time,
+                   to_char(end_time, 'HH24:MI')   AS end_time
+              FROM schedules
+             WHERE employee_id = %s
+             ORDER BY day_of_week
+            """,
+            (device['employee_id'],)
+        )
+
+        schedule = []
+        for r in rows:
+            dow = r['day_of_week']
+            schedule.append({
+                'day_of_week': dow,
+                'day_label': DAY_LABELS.get(dow, ''),
+                'start_time': r['start_time'],
+                'end_time': r['end_time'],
+            })
+
+        return jsonify({
+            'employee': device['full_name'],
+            'schedule': schedule,
+        }), 200
+
+    except Exception as e:
+        print(f'[schedules] Error en get_weekly_schedule: {e}')
+        return jsonify({'employee': '', 'schedule': [], 'error': str(e)}), 500

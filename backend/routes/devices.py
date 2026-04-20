@@ -1,4 +1,5 @@
 from flask import Blueprint, request, jsonify
+from utils.db import query_one
 
 devices_bp = Blueprint('devices', __name__)
 
@@ -13,18 +14,36 @@ def verify_device():
 
     token = data['device_token']
 
-    # ── Lógica simulada (se reemplazará con consulta a BD) ──
-    MOCK_DEVICES = {
-        'token-simulado-juan-perez': {
+    try:
+        row = query_one(
+            """
+            SELECT d.id         AS device_id,
+                   d.is_active,
+                   e.id         AS employee_id,
+                   e.full_name,
+                   e.status     AS employee_status
+              FROM devices d
+              JOIN employees e ON e.id = d.employee_id
+             WHERE d.device_token = %s
+            """,
+            (token,)
+        )
+
+        if not row:
+            return jsonify({'valid': False}), 200
+
+        if not row['is_active']:
+            return jsonify({'valid': False, 'error': 'Dispositivo desactivado'}), 200
+
+        if row['employee_status'] != 'active':
+            return jsonify({'valid': False, 'error': 'Empleado inactivo'}), 200
+
+        return jsonify({
             'valid': True,
-            'employeeName': 'Juan Pérez',
-            'employeeId': 'a1b2c3d4-0000-0000-0000-000000000001',
-        }
-    }
+            'employeeName': row['full_name'],
+            'employeeId': str(row['employee_id']),
+        }), 200
 
-    device = MOCK_DEVICES.get(token)
-
-    if device:
-        return jsonify(device), 200
-
-    return jsonify({'valid': False}), 200
+    except Exception as e:
+        print(f'[devices] Error en verify_device: {e}')
+        return jsonify({'valid': False, 'error': 'Error interno del servidor'}), 500
