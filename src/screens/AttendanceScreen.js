@@ -15,7 +15,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../theme';
 import { getDeviceToken, saveDeviceToken } from '../utils/storage';
-import { checkDeviceToken, fetchCurrentState } from '../services/api';
+import { checkDeviceToken, fetchCurrentState, sendAttendance } from '../services/api';
 
 export default function AttendanceScreen() {
   const cameraRef = useRef(null);
@@ -106,21 +106,26 @@ export default function AttendanceScreen() {
         }
       }
 
-      // Simular envío al backend (2 segundos de espera)
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      // Enviar al backend real
+      const token = await getDeviceToken();
+      const result = await sendAttendance(photoBase64, currentAction, token);
 
-      const actionLabel = currentAction === 'check_in' ? 'Ingreso' : 'Salida';
+      if (result.success) {
+        const actionLabel = currentAction === 'check_in' ? 'Ingreso' : 'Salida';
 
-      Alert.alert(
-        '✅ Asistencia registrada',
-        `${actionLabel} registrado con éxito.\n${new Date().toLocaleTimeString()}`,
-        [{ text: 'OK' }]
-      );
+        Alert.alert(
+          '✅ Asistencia registrada',
+          `${actionLabel} registrado con éxito.\n${new Date().toLocaleTimeString()}`,
+          [{ text: 'OK' }]
+        );
 
-      // Alternar acción para la próxima vez
-      setCurrentAction((prev) =>
-        prev === 'check_in' ? 'check_out' : 'check_in'
-      );
+        // Alternar acción para la próxima vez
+        setCurrentAction((prev) =>
+          prev === 'check_in' ? 'check_out' : 'check_in'
+        );
+      } else {
+        Alert.alert('Error', result.error || 'No se pudo registrar la asistencia.');
+      }
     } catch (error) {
       Alert.alert('Error', 'No se pudo registrar la asistencia. Intente de nuevo.');
       console.error('[Attendance] Error al registrar:', error);

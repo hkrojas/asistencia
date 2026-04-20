@@ -1,46 +1,16 @@
-import React, { useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
   FlatList,
   StyleSheet,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../theme';
-
-// ── Datos mock de horario semanal ──────────────────────────────
-const MOCK_SCHEDULE = {
-  defaultStart: '08:00 AM',
-  defaultEnd: '05:00 PM',
-  // Días no laborales (0=Domingo, 6=Sábado)
-  daysOff: [0, 6],
-};
-
-/**
- * Genera los próximos N días laborales a partir de hoy.
- */
-function getNextWorkDays(count = 5) {
-  const days = [];
-  const now = new Date();
-  let cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-  while (days.length < count) {
-    const dayOfWeek = cursor.getDay();
-    if (!MOCK_SCHEDULE.daysOff.includes(dayOfWeek)) {
-      days.push({
-        id: cursor.toISOString(),
-        date: new Date(cursor),
-        dayOfWeek,
-        start: MOCK_SCHEDULE.defaultStart,
-        end: MOCK_SCHEDULE.defaultEnd,
-      });
-    }
-    cursor.setDate(cursor.getDate() + 1);
-  }
-
-  return days;
-}
+import { getDeviceToken } from '../utils/storage';
+import { fetchWeeklySchedule } from '../services/api';
 
 // ── Helpers de formato ─────────────────────────────────────────
 const DAY_NAMES = [
@@ -67,6 +37,57 @@ function isToday(date) {
     date.getMonth() === now.getMonth() &&
     date.getFullYear() === now.getFullYear()
   );
+}
+
+/**
+ * Genera los próximos N días laborales combinando fechas reales
+ * con los horarios recibidos del backend.
+ * @param {Array} apiSchedule - Horario semanal del backend [{day_of_week, start_time, end_time}]
+ * @param {number} count - Cantidad de días a generar
+ */
+function getNextWorkDays(apiSchedule, count = 5) {
+  // Convertir schedule del backend en un mapa day_of_week → horario
+  // Backend usa 0=Lunes … 4=Viernes; JS usa 0=Domingo … 6=Sábado
+  // Mapeo: backend_day → js_day:  0→1, 1→2, 2→3, 3→4, 4→5
+  const scheduleMap = {};
+  apiSchedule.forEach((s) => {
+    const jsDay = s.day_of_week + 1; // backend 0=Lunes → JS 1=Lunes
+    scheduleMap[jsDay] = {
+      start: formatTime(s.start_time),
+      end: formatTime(s.end_time),
+    };
+  });
+
+  const days = [];
+  const now = new Date();
+  let cursor = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  while (days.length < count) {
+    const jsDay = cursor.getDay();
+    if (scheduleMap[jsDay]) {
+      days.push({
+        id: cursor.toISOString(),
+        date: new Date(cursor),
+        dayOfWeek: jsDay,
+        start: scheduleMap[jsDay].start,
+        end: scheduleMap[jsDay].end,
+      });
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+
+  return days;
+}
+
+/**
+ * Convierte "08:00" → "08:00 AM", "17:00" → "05:00 PM"
+ */
+function formatTime(timeStr) {
+  if (!timeStr) return timeStr;
+  const [h, m] = timeStr.split(':').map(Number);
+  const suffix = h >= 12 ? 'PM' : 'AM';
+  const hour12 = h === 0 ? 12 : h > 12 ? h - 12 : h;
+  return `${String(hour12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${suffix}`;
 }
 
 // ── Componente de tarjeta de día ───────────────────────────────
@@ -115,7 +136,62 @@ function DayCard({ item }) {
 
 // ── Pantalla principal ─────────────────────────────────────────
 export default function ScheduleScreen() {
-  const workDays = useMemo(() => getNextWorkDays(5), []);
+  const [workDays, setWorkDays] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const loadSchedule = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      const token = await getDeviceToken();
+      if (!token) {
+        setWorkDays([]);
+        setError('Dispositivo no vinculado');
+        return;
+      }
+
+      const result = await fetchWeeklySchedule(token);
+
+      if (result.error) {
+        setError('No se pudo cargar el horario');
+        setWorkDays([]);
+        return;
+      }
+
+      const days = getNextWorkDays(result.schedule || [], 5);
+      setWorkDays(days);
+    } catch (err) {
+      console.error('[Schedule] Error cargando horario:', err);
+      setError('Error de conexión');
+      setWorkDays([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSchedule();
+  }, [loadSchedule]);
+
+  if (loading) {
+    return (
+      <View style={styles.centeredContainer}>
+        <ActivityIndicator size="large" color={Colors.todayAccent} />
+        <Text style={styles.loadingText}>Cargando horario...</Text>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={styles.centeredContainer}>
+        <Ionicons name="cloud-offline-outline" size={48} color={Colors.textSecondary} />
+        <Text style={styles.errorText}>{error}</Text>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -142,6 +218,24 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.surface,
+  },
+  centeredContainer: {
+    flex: 1,
+    backgroundColor: Colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: Colors.textSecondary,
+  },
+  errorText: {
+    marginTop: 16,
+    fontSize: 16,
+    color: Colors.textSecondary,
+    textAlign: 'center',
   },
   sectionHeader: {
     flexDirection: 'row',
