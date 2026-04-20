@@ -4,6 +4,9 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
+  Pressable,
+  Modal,
+  TextInput,
   ActivityIndicator,
   Alert,
   Platform,
@@ -11,7 +14,7 @@ import {
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../theme';
-import { getDeviceToken } from '../utils/storage';
+import { getDeviceToken, saveDeviceToken } from '../utils/storage';
 import { checkDeviceToken, fetchCurrentState } from '../services/api';
 
 export default function AttendanceScreen() {
@@ -23,6 +26,10 @@ export default function AttendanceScreen() {
   const [employeeName, setEmployeeName] = useState('');
   const [currentAction, setCurrentAction] = useState('check_in');
   const [isProcessing, setIsProcessing] = useState(false);
+
+  // ── Estado del modal de administrador ──
+  const [showAdminModal, setShowAdminModal] = useState(false);
+  const [adminPin, setAdminPin] = useState('');
 
   useEffect(() => {
     initializeDevice();
@@ -56,6 +63,26 @@ export default function AttendanceScreen() {
       setLinked(false);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleAdminLink() {
+    if (adminPin === '12345') {
+      setShowAdminModal(false);
+      setAdminPin('');
+      setLoading(true);
+
+      try {
+        await saveDeviceToken('token-simulado-juan-perez');
+        Alert.alert('✅ Vinculado', 'Dispositivo vinculado a la red.');
+        await initializeDevice();
+      } catch (error) {
+        Alert.alert('Error', 'No se pudo vincular el dispositivo.');
+        setLoading(false);
+      }
+    } else {
+      Alert.alert('PIN inválido', 'El PIN ingresado no es correcto.');
+      setAdminPin('');
     }
   }
 
@@ -117,12 +144,56 @@ export default function AttendanceScreen() {
     return (
       <View style={styles.centeredContainer}>
         <View style={styles.unlinkedCard}>
-          <Ionicons name="warning-outline" size={56} color={Colors.textSecondary} />
+          <Pressable
+            onLongPress={() => setShowAdminModal(true)}
+            delayLongPress={3000}
+          >
+            <Ionicons name="warning-outline" size={56} color={Colors.textSecondary} />
+          </Pressable>
           <Text style={styles.unlinkedTitle}>Dispositivo no vinculado</Text>
           <Text style={styles.unlinkedSubtitle}>
             Contacte al administrador para vincular este equipo al sistema de asistencia.
           </Text>
         </View>
+
+        {/* ── Modal oculto de administrador ── */}
+        <Modal
+          visible={showAdminModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => { setShowAdminModal(false); setAdminPin(''); }}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <Ionicons name="shield-checkmark-outline" size={40} color={Colors.todayAccent} />
+              <Text style={styles.modalTitle}>Acceso de Administrador</Text>
+              <Text style={styles.modalSubtitle}>Ingrese el PIN para vincular este equipo</Text>
+
+              <TextInput
+                style={styles.pinInput}
+                value={adminPin}
+                onChangeText={setAdminPin}
+                placeholder="PIN"
+                placeholderTextColor={Colors.tabInactive}
+                secureTextEntry
+                keyboardType="number-pad"
+                maxLength={10}
+                autoFocus
+              />
+
+              <TouchableOpacity style={styles.linkButton} onPress={handleAdminLink}>
+                <Text style={styles.linkButtonText}>Vincular Equipo</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => { setShowAdminModal(false); setAdminPin(''); }}
+              >
+                <Text style={styles.cancelButtonText}>Cancelar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
       </View>
     );
   }
@@ -343,5 +414,78 @@ const styles = StyleSheet.create({
     color: Colors.textLight,
     fontSize: 16,
     fontWeight: '700',
+  },
+
+  // ── Modal de administrador ──
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: Colors.overlay,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    backgroundColor: Colors.cardBackground,
+    borderRadius: 20,
+    padding: 32,
+    width: '100%',
+    maxWidth: 340,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 8,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    marginTop: 12,
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+    marginTop: 6,
+    textAlign: 'center',
+  },
+  pinInput: {
+    width: '100%',
+    marginTop: 24,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 20,
+    fontWeight: '600',
+    textAlign: 'center',
+    letterSpacing: 6,
+    color: Colors.textPrimary,
+  },
+  linkButton: {
+    marginTop: 20,
+    backgroundColor: Colors.todayAccent,
+    borderRadius: 12,
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    width: '100%',
+    alignItems: 'center',
+  },
+  linkButtonText: {
+    color: Colors.textLight,
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  cancelButton: {
+    marginTop: 12,
+    paddingVertical: 10,
+  },
+  cancelButtonText: {
+    color: Colors.textSecondary,
+    fontSize: 15,
+    fontWeight: '600',
   },
 });
