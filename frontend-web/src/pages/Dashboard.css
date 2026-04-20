@@ -1,0 +1,252 @@
+/* ── Dashboard Layout ── */
+.dashboard {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 28px 32px 48px;
+}
+
+/* ── Header ── */
+.dashboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 32px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.header-logo {
+  width: 46px;
+  height: 46px;
+  object-fit: contain;
+}
+
+.header-title {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--color-navy);
+  letter-spacing: -0.3px;
+  line-height: 1.2;
+}
+
+.header-subtitle {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+.btn-export {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 22px;
+  background-color: var(--color-navy);
+  color: var(--color-text-light);
+  border: none;
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-export:hover {
+  background-color: var(--color-navy-light);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.btn-export:active {
+  transform: translateY(0);
+}
+
+/* ── Summary Cards ── */
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 18px;
+  margin-bottom: 32px;
+}
+
+.summary-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: 22px 24px;
+  border: 1px solid var(--color-border-light);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.summary-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.summary-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.summary-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.summary-value {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--color-text);
+  line-height: 1.1;
+}
+
+.summary-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  margin-top: 2px;
+}
+
+/* ── Table Section ── */
+.table-section {
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-border-light);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.table-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--color-navy);
+}
+
+.table-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--color-navy);
+}
+
+.table-date {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.data-table thead {
+  background: var(--color-bg);
+}
+
+.data-table th {
+  padding: 12px 20px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  white-space: nowrap;
+}
+
+.th-icon {
+  display: inline-block;
+  vertical-align: -2px;
+  margin-right: 4px;
+  opacity: 0.5;
+}
+
+.data-table td {
+  padding: 16px 20px;
+  font-size: 14px;
+  color: var(--color-text);
+  border-bottom: 1px solid var(--color-border-light);
+  white-space: nowrap;
+}
+
+.data-table tbody tr {
+  transition: background-color 0.15s ease;
+}
+
+.data-table tbody tr:hover {
+  background-color: rgba(245, 166, 35, 0.04);
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.cell-name {
+  font-weight: 600;
+  color: var(--color-navy);
+}
+
+.cell-hours {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Badges ── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.badge-success {
+  background: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.badge-warning {
+  background: var(--color-warning-bg);
+  color: var(--color-warning);
+}
+
+/* ── Responsive ── */
+@media (max-width: 900px) {
+  .dashboard { padding: 20px 16px; }
+  .summary-grid { grid-template-columns: repeat(2, 1fr); }
+  .dashboard-header { flex-direction: column; align-items: flex-start; gap: 16px; }
+}
+
+@media (max-width: 520px) {
+  .summary-grid { grid-template-columns: 1fr; }
+}

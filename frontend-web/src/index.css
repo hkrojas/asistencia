@@ -1,0 +1,70 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+/* ── Design Tokens ── */
+:root {
+  /* Corporate palette — Grupo Hernández */
+  --color-navy:        #0c1a3a;
+  --color-navy-light:  #162550;
+  --color-navy-subtle: #1e3060;
+  --color-gold:        #f5a623;
+  --color-gold-hover:  #e69617;
+  --color-gold-light:  rgba(245, 166, 35, 0.12);
+
+  /* Neutrals */
+  --color-bg:          #f4f6f9;
+  --color-surface:     #ffffff;
+  --color-border:      #e2e6ed;
+  --color-border-light:#eef1f5;
+
+  /* Text */
+  --color-text:        #1a1f2e;
+  --color-text-secondary: #6b7280;
+  --color-text-muted:  #9ca3af;
+  --color-text-light:  #ffffff;
+
+  /* Status */
+  --color-success:     #10b981;
+  --color-success-bg:  rgba(16, 185, 129, 0.1);
+  --color-warning:     #f59e0b;
+  --color-warning-bg:  rgba(245, 158, 11, 0.1);
+  --color-danger:      #ef4444;
+  --color-danger-bg:   rgba(239, 68, 68, 0.1);
+
+  /* Sizing */
+  --radius-sm:  6px;
+  --radius-md:  10px;
+  --radius-lg:  14px;
+  --radius-xl:  20px;
+  --shadow-sm:  0 1px 3px rgba(0,0,0,0.06);
+  --shadow-md:  0 4px 12px rgba(0,0,0,0.08);
+  --shadow-lg:  0 8px 30px rgba(0,0,0,0.1);
+
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+/* ── Reset ── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background-color: var(--color-gold-light);
+  color: var(--color-navy);
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
