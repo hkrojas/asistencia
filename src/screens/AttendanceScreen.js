@@ -1,15 +1,28 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  Platform,
+} from 'react-native';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../theme';
 import { getDeviceToken } from '../utils/storage';
 import { checkDeviceToken, fetchCurrentState } from '../services/api';
 
 export default function AttendanceScreen() {
+  const cameraRef = useRef(null);
+  const [permission, requestPermission] = useCameraPermissions();
+
   const [loading, setLoading] = useState(true);
   const [linked, setLinked] = useState(false);
   const [employeeName, setEmployeeName] = useState('');
   const [currentAction, setCurrentAction] = useState('check_in');
+  const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
     initializeDevice();
@@ -25,7 +38,6 @@ export default function AttendanceScreen() {
         return;
       }
 
-      // Verificar con backend si el token es válido
       const verification = await checkDeviceToken(token);
 
       if (!verification.valid) {
@@ -37,7 +49,6 @@ export default function AttendanceScreen() {
       setLinked(true);
       setEmployeeName(verification.employeeName || '');
 
-      // Obtener estado actual (ingreso o salida)
       const state = await fetchCurrentState(token);
       setCurrentAction(state.action);
     } catch (error) {
@@ -48,10 +59,53 @@ export default function AttendanceScreen() {
     }
   }
 
+  async function handleTakePicture() {
+    if (isProcessing) return;
+
+    setIsProcessing(true);
+
+    try {
+      // Capturar foto (en web no disponible, se simula)
+      let photoBase64 = null;
+      if (cameraRef.current) {
+        try {
+          const photo = await cameraRef.current.takePictureAsync({
+            base64: true,
+            quality: 0.7,
+          });
+          photoBase64 = photo?.base64 || null;
+        } catch (e) {
+          console.warn('[Camera] No se pudo capturar foto:', e);
+        }
+      }
+
+      // Simular envío al backend (2 segundos de espera)
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
+      const actionLabel = currentAction === 'check_in' ? 'Ingreso' : 'Salida';
+
+      Alert.alert(
+        '✅ Asistencia registrada',
+        `${actionLabel} registrado con éxito.\n${new Date().toLocaleTimeString()}`,
+        [{ text: 'OK' }]
+      );
+
+      // Alternar acción para la próxima vez
+      setCurrentAction((prev) =>
+        prev === 'check_in' ? 'check_out' : 'check_in'
+      );
+    } catch (error) {
+      Alert.alert('Error', 'No se pudo registrar la asistencia. Intente de nuevo.');
+      console.error('[Attendance] Error al registrar:', error);
+    } finally {
+      setIsProcessing(false);
+    }
+  }
+
   // ── Estado: Cargando ──
   if (loading) {
     return (
-      <View style={styles.container}>
+      <View style={styles.centeredContainer}>
         <ActivityIndicator size="large" color={Colors.checkIn} />
         <Text style={styles.loadingText}>Verificando dispositivo...</Text>
       </View>
@@ -61,7 +115,7 @@ export default function AttendanceScreen() {
   // ── Estado: Dispositivo NO vinculado ──
   if (!linked) {
     return (
-      <View style={styles.container}>
+      <View style={styles.centeredContainer}>
         <View style={styles.unlinkedCard}>
           <Ionicons name="warning-outline" size={56} color={Colors.textSecondary} />
           <Text style={styles.unlinkedTitle}>Dispositivo no vinculado</Text>
@@ -73,35 +127,82 @@ export default function AttendanceScreen() {
     );
   }
 
-  // ── Estado: Vinculado (placeholder para cámara, próxima fase) ──
+  // ── Estado: Sin permiso de cámara ──
+  if (!permission) {
+    return (
+      <View style={styles.centeredContainer}>
+        <ActivityIndicator size="large" color={Colors.checkIn} />
+      </View>
+    );
+  }
+
+  if (!permission.granted) {
+    return (
+      <View style={styles.centeredContainer}>
+        <View style={styles.unlinkedCard}>
+          <Ionicons name="camera-outline" size={56} color={Colors.textSecondary} />
+          <Text style={styles.unlinkedTitle}>Permiso de cámara requerido</Text>
+          <Text style={styles.unlinkedSubtitle}>
+            Para registrar tu asistencia necesitamos acceso a la cámara.
+          </Text>
+          <TouchableOpacity style={styles.permissionButton} onPress={requestPermission}>
+            <Text style={styles.permissionButtonText}>Permitir cámara</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
+  // ── Estado: Vinculado + Cámara activa ──
   const isCheckIn = currentAction === 'check_in';
+  const buttonColor = isCheckIn ? Colors.checkIn : Colors.checkOut;
+  const buttonLabel = isCheckIn ? 'MARCAR INGRESO' : 'MARCAR SALIDA';
+  const buttonIcon = isCheckIn ? 'log-in-outline' : 'log-out-outline';
 
   return (
     <View style={styles.container}>
-      <Text style={styles.greetingText}>
-        Hola, {employeeName}
-      </Text>
-      <Text style={styles.instructionText}>
-        {isCheckIn
-          ? 'Presiona el botón para registrar tu ingreso'
-          : 'Presiona el botón para registrar tu salida'}
-      </Text>
+      {/* Cámara frontal como fondo completo */}
+      <CameraView
+        ref={cameraRef}
+        style={StyleSheet.absoluteFillObject}
+        facing="front"
+      />
 
-      {/* Placeholder visual del botón de acción (se conectará a cámara en Fase 2) */}
-      <View
-        style={[
-          styles.actionPlaceholder,
-          { backgroundColor: isCheckIn ? Colors.checkIn : Colors.checkOut },
-        ]}
-      >
-        <Ionicons
-          name={isCheckIn ? 'log-in-outline' : 'log-out-outline'}
-          size={48}
-          color={Colors.textLight}
-        />
-        <Text style={styles.actionText}>
-          {isCheckIn ? 'INGRESO' : 'SALIDA'}
+      {/* Overlay oscuro sutil para legibilidad */}
+      <View style={styles.overlay} />
+
+      {/* Encabezado superior */}
+      <View style={styles.topBar}>
+        <Text style={styles.greetingText}>Hola, {employeeName}</Text>
+        <Text style={styles.instructionText}>
+          {isCheckIn
+            ? 'Posiciona tu rostro y marca tu ingreso'
+            : 'Posiciona tu rostro y marca tu salida'}
         </Text>
+      </View>
+
+      {/* Guía visual: marco facial */}
+      <View style={styles.faceGuideContainer}>
+        <View style={styles.faceGuide} />
+      </View>
+
+      {/* Botón de acción en la parte inferior */}
+      <View style={styles.bottomBar}>
+        <TouchableOpacity
+          style={[styles.actionButton, { backgroundColor: buttonColor }]}
+          onPress={handleTakePicture}
+          disabled={isProcessing}
+          activeOpacity={0.8}
+        >
+          {isProcessing ? (
+            <ActivityIndicator size="large" color={Colors.textLight} />
+          ) : (
+            <>
+              <Ionicons name={buttonIcon} size={36} color={Colors.textLight} />
+              <Text style={styles.actionButtonText}>{buttonLabel}</Text>
+            </>
+          )}
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -110,10 +211,91 @@ export default function AttendanceScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#000',
+  },
+  centeredContainer: {
+    flex: 1,
     backgroundColor: Colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
     padding: 24,
+  },
+
+  // ── Overlay ──
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.25)',
+  },
+
+  // ── Top bar ──
+  topBar: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingHorizontal: 24,
+    paddingBottom: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    alignItems: 'center',
+  },
+  greetingText: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: Colors.textLight,
+    marginBottom: 4,
+  },
+  instructionText: {
+    fontSize: 15,
+    color: 'rgba(255,255,255,0.8)',
+    textAlign: 'center',
+  },
+
+  // ── Guía facial ──
+  faceGuideContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  faceGuide: {
+    width: 220,
+    height: 280,
+    borderRadius: 110,
+    borderWidth: 2.5,
+    borderColor: 'rgba(255,255,255,0.5)',
+    borderStyle: 'dashed',
+  },
+
+  // ── Bottom bar ──
+  bottomBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    paddingBottom: Platform.OS === 'ios' ? 40 : 30,
+    paddingTop: 20,
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+  },
+  actionButton: {
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 10,
+  },
+  actionButtonText: {
+    color: Colors.textLight,
+    fontSize: 16,
+    fontWeight: '800',
+    marginTop: 8,
+    letterSpacing: 0.8,
+    textAlign: 'center',
   },
 
   // ── Loading ──
@@ -123,7 +305,7 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
   },
 
-  // ── No vinculado ──
+  // ── No vinculado / Permisos ──
   unlinkedCard: {
     alignItems: 'center',
     backgroundColor: Colors.cardBackground,
@@ -150,37 +332,16 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 22,
   },
-
-  // ── Vinculado ──
-  greetingText: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: Colors.textPrimary,
-    marginBottom: 8,
+  permissionButton: {
+    marginTop: 24,
+    backgroundColor: Colors.checkIn,
+    borderRadius: 12,
+    paddingHorizontal: 28,
+    paddingVertical: 14,
   },
-  instructionText: {
-    fontSize: 16,
-    color: Colors.textSecondary,
-    marginBottom: 40,
-    textAlign: 'center',
-  },
-  actionPlaceholder: {
-    width: 160,
-    height: 160,
-    borderRadius: 80,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: Colors.shadow,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 12,
-    elevation: 6,
-  },
-  actionText: {
+  permissionButtonText: {
     color: Colors.textLight,
-    fontSize: 18,
-    fontWeight: '800',
-    marginTop: 6,
-    letterSpacing: 1,
+    fontSize: 16,
+    fontWeight: '700',
   },
 });
