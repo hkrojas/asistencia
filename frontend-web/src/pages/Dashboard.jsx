@@ -11,6 +11,7 @@ import {
   Building2,
 } from 'lucide-react';
 import { getAdminStats, getAdminAttendance } from '../services/api';
+import ExceptionsManager from '../components/ExceptionsManager';
 import './Dashboard.css';
 
 export default function Dashboard() {
@@ -139,8 +140,11 @@ export default function Dashboard() {
         </div>
       </section>
 
+      {/* ── WFM Exceptions Module ── */}
+      <ExceptionsManager />
+
       {/* ── Table ── */}
-      <section className="table-section">
+      <section className="table-section" style={{ marginTop: '32px' }}>
         <div className="table-header">
           <div className="table-title-row">
             <CalendarDays size={20} />
