@@ -26,4 +26,10 @@ export const downloadAttendanceReport = async () => {
   link.remove();
 };
 
+export const getEmployees = () => api.get('/admin/employees');
+export const createEmployee = (data) => api.post('/admin/employees', data);
+export const getBuildings = () => api.get('/admin/buildings');
+export const createBuilding = (data) => api.post('/admin/buildings', data);
+export const getRoles = () => api.get('/admin/roles');
+
 export default api;

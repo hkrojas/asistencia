@@ -216,3 +216,84 @@ def export_attendance_csv():
     except Exception as e:
         print(f'[admin] Error en export_attendance_csv: {e}')
         return jsonify({'error': 'Error al generar CSV'}), 500
+
+@admin_bp.route('/admin/buildings', methods=['GET', 'POST'])
+def manage_buildings():
+    from flask import request
+    if request.method == 'GET':
+        try:
+            buildings = query_all("SELECT id, name, address FROM buildings ORDER BY name ASC")
+            return jsonify(buildings), 200
+        except Exception as e:
+            print(f'[admin] Error en manage_buildings GET: {e}')
+            return jsonify({'error': 'Error al obtener sedes'}), 500
+    
+    if request.method == 'POST':
+        data = request.json
+        try:
+            name = data.get('name')
+            address = data.get('address')
+            if not name:
+                return jsonify({'error': 'El nombre es obligatorio'}), 400
+                
+            new_id = query_one("""
+                INSERT INTO buildings (name, address) 
+                VALUES (%s, %s) RETURNING id
+            """, (name, address))
+            return jsonify({'message': 'Sede creada', 'id': str(new_id['id'])}), 201
+        except Exception as e:
+            print(f'[admin] Error en manage_buildings POST: {e}')
+            return jsonify({'error': 'Error al crear sede'}), 500
+
+@admin_bp.route('/admin/employees', methods=['GET', 'POST'])
+def manage_employees():
+    from flask import request
+    if request.method == 'GET':
+        try:
+            employees = query_all("""
+                SELECT 
+                    e.id, e.full_name, e.job_title, e.status,
+                    b.name as building_name,
+                    r.name as role_name
+                FROM employees e
+                LEFT JOIN buildings b ON b.id = e.primary_building_id
+                JOIN roles r ON r.id = e.role_id
+                ORDER BY e.full_name ASC
+            """)
+            # Convert UUIDs and timestamps to strings if necessary (query_all usually handles this but safety first)
+            for e in employees:
+                e['id'] = str(e['id'])
+            return jsonify(employees), 200
+        except Exception as e:
+            print(f'[admin] Error en manage_employees GET: {e}')
+            return jsonify({'error': 'Error al obtener empleados'}), 500
+            
+    if request.method == 'POST':
+        data = request.json
+        try:
+            full_name = data.get('full_name')
+            job_title = data.get('job_title')
+            building_id = data.get('primary_building_id')
+            role_id = data.get('role_id', '00000000-0000-0000-0000-000000000001') # Default Worker
+            
+            if not full_name:
+                return jsonify({'error': 'El nombre es obligatorio'}), 400
+                
+            new_id = query_one("""
+                INSERT INTO employees (full_name, job_title, primary_building_id, role_id)
+                VALUES (%s, %s, %s, %s) RETURNING id
+            """, (full_name, job_title, building_id, role_id))
+            return jsonify({'message': 'Empleado creado', 'id': str(new_id['id'])}), 201
+        except Exception as e:
+            print(f'[admin] Error en manage_employees POST: {e}')
+            return jsonify({'error': 'Error al crear empleado'}), 500
+
+@admin_bp.route('/admin/roles', methods=['GET'])
+def get_roles():
+    try:
+        roles = query_all("SELECT id, name FROM roles ORDER BY name ASC")
+        for r in roles:
+            r['id'] = str(r['id'])
+        return jsonify(roles), 200
+    except Exception as e:
+        return jsonify({'error': 'Error al obtener roles'}), 500
