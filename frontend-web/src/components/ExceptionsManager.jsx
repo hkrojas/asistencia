@@ -1,40 +1,38 @@
-import { useState } from 'react';
-import { AlertCircle, Clock, CheckCircle, TimerReset } from 'lucide-react';
-import { resolveException } from '../services/api';
+import { useState, useEffect } from 'react';
+import { AlertCircle, Clock, CheckCircle, TimerReset, Loader2 } from 'lucide-react';
+import { resolveException, getPendingExceptions } from '../services/api';
 import './ExceptionsManager.css';
 
-const MOCK_EXCEPTIONS = [
-  {
-    id: 101,
-    employee: 'Ricardo Espinal',
-    date: '2026-04-20',
-    scheludedTime: '08:00 - 17:00',
-    actualTime: '08:02 - 19:15',
-    excess: '+2h 15m',
-    reason: 'Cierre de inventario trimestral',
-  },
-  {
-    id: 102,
-    employee: 'Sofía Méndez',
-    date: '2026-04-20',
-    scheludedTime: '09:00 - 18:00',
-    actualTime: '08:45 - 19:30',
-    excess: '+1h 30m',
-    reason: 'Soporte técnico extendido',
-  }
-];
-
 export default function ExceptionsManager() {
-  const [exceptions, setExceptions] = useState(MOCK_EXCEPTIONS);
+  const [exceptions, setExceptions] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchExceptions = async () => {
+    try {
+      const { data } = await getPendingExceptions();
+      setExceptions(data);
+    } catch (err) {
+      console.error('Error fetching exceptions:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchExceptions();
+    // Auto-refresh cada 60 segundos para incidencias nuevas
+    const interval = setInterval(fetchExceptions, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleResolve = async (id, type) => {
     try {
       await resolveException(id, type);
-      // Simulación: eliminamos de la lista al resolver
+      // Removemos de la lista localmente tras éxito
       setExceptions(prev => prev.filter(ex => ex.id !== id));
     } catch (err) {
-      // Ignoramos error en simulación ya que el endpoint no existe
-      setExceptions(prev => prev.filter(ex => ex.id !== id));
+      console.error('Error resolving exception:', err);
+      alert('Error al procesar la resolución');
     }
   };
 
@@ -49,20 +47,25 @@ export default function ExceptionsManager() {
       </div>
 
       <div className="table-wrapper">
-        <table className="data-table">
-          <thead>
-            <tr>
-              <th>Empleado</th>
-              <th>Fecha</th>
-              <th>Turno Teórico</th>
-              <th>Turno Real</th>
-              <th>Tiempo Excedente</th>
-              <th style={{ textAlign: 'right' }}>Acciones</th>
-            </tr>
-          </thead>
-          <tbody>
-            {exceptions.length > 0 ? (
-              exceptions.map((ex) => (
+        {loading ? (
+          <div style={{ display: 'flex', justifyContent: 'center', padding: '3rem' }}>
+            <Loader2 className="animate-spin" size={32} />
+          </div>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Empleado</th>
+                <th>Fecha</th>
+                <th>Turno Teórico</th>
+                <th>Turno Real</th>
+                <th>Tiempo Excedente</th>
+                <th style={{ textAlign: 'right' }}>Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {exceptions.length > 0 ? (
+                exceptions.map((ex) => (
                 <tr key={ex.id}>
                   <td className="cell-name">{ex.employee}</td>
                   <td>{ex.date}</td>
@@ -99,7 +102,8 @@ export default function ExceptionsManager() {
               </tr>
             )}
           </tbody>
-        </table>
+          </table>
+        )}
       </div>
     </div>
   );

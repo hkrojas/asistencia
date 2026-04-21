@@ -9,9 +9,14 @@ load_dotenv()
 def get_connection():
     """
     Establece y retorna una conexión a PostgreSQL.
+    Prioriza DATABASE_URL (ideal para Neon/Heroku).
     Usa RealDictCursor para que las filas se devuelvan como diccionarios.
-    Las credenciales se leen desde variables de entorno (.env).
     """
+    db_url = os.getenv('DATABASE_URL')
+    
+    if db_url:
+        return psycopg2.connect(db_url, cursor_factory=RealDictCursor)
+
     return psycopg2.connect(
         host=os.getenv('DB_HOST', 'localhost'),
         port=int(os.getenv('DB_PORT', 5432)),

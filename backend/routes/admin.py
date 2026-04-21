@@ -65,3 +65,79 @@ def get_admin_attendance():
     except Exception as e:
         print(f'[admin] Error en get_admin_attendance: {e}')
         return jsonify({'error': 'Error al obtener historial de asistencia'}), 500
+
+@admin_bp.route('/admin/exceptions/pending', methods=['GET'])
+def get_pending_exceptions():
+    """Identifica registros de salida con tiempo excedente sin resolución."""
+    try:
+        # Buscamos marcaciones de check_out que excedan por > 15 min el horario planificado
+        rows = query_all("""
+            SELECT 
+                al.id AS log_id,
+                e.id AS employee_id,
+                e.full_name AS employee_name,
+                s.start_time,
+                s.end_time,
+                al.timestamp::time AS actual_out,
+                al.timestamp::date AS date,
+                EXTRACT(EPOCH FROM (al.timestamp::time - s.end_time))/60 AS excess_minutes
+            FROM attendance_logs al
+            JOIN employees e ON e.id = al.employee_id
+            JOIN schedules s ON s.employee_id = e.id AND s.day_of_week = EXTRACT(DOW FROM al.timestamp)
+            LEFT JOIN time_exceptions te ON te.employee_id = e.id AND te.date = al.timestamp::date
+            WHERE al.action_type = 'check_out'
+            AND te.id IS NULL
+            AND (al.timestamp::time - s.end_time) > INTERVAL '15 minutes'
+            ORDER BY al.timestamp DESC
+        """)
+        
+        results = []
+        for r in rows:
+            results.append({
+                'id': str(r['log_id']),
+                'employee': r['employee_name'],
+                'date': r['date'].isoformat(),
+                'scheludedTime': f"{r['start_time'].strftime('%H:%M')} - {r['end_time'].strftime('%H:%M')}",
+                'actualTime': f"-- : -- - {r['actual_out'].strftime('%H:%M')}",
+                'excess': f"+{int(r['excess_minutes'])}m",
+                'minutes': int(r['excess_minutes']),
+                'employeeId': str(r['employee_id'])
+            })
+            
+        return jsonify(results), 200
+        
+    except Exception as e:
+        print(f'[admin] Error en get_pending_exceptions: {e}')
+        return jsonify({'error': 'Error al obtener incidencias'}), 500
+
+@admin_bp.route('/admin/exceptions/resolve', methods=['POST'])
+def resolve_exception():
+    """Registra la resolución de una incidencia en time_exceptions."""
+    from flask import request
+    data = request.json
+    
+    try:
+        log_id = data.get('logId')
+        res_type = data.get('resolutionType')
+        admin_id = data.get('adminId', 'a1b2c3d4-0000-0000-0000-000000000002') # Admin RRHH por defecto
+        
+        # Primero obtenemos el employee_id y la fecha del log original
+        log_data = query_one("SELECT employee_id, timestamp::date FROM attendance_logs WHERE id = %s", (log_id,))
+        
+        if not log_data:
+            return jsonify({'error': 'Log no encontrado'}), 404
+            
+        # Calculamos minutos de ajuste si no vienen (simplificado)
+        minutes = data.get('minutes_adjusted', 60) 
+
+        query_one("""
+            INSERT INTO time_exceptions (employee_id, date, exception_type, minutes_adjusted, approved_by, reason)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            RETURNING id
+        """, (log_data['employee_id'], log_data['timestamp'], res_type, minutes, admin_id, 'Resolución desde Panel Web'))
+        
+        return jsonify({'message': 'Resolución registrada con éxito'}), 200
+        
+    except Exception as e:
+        print(f'[admin] Error en resolve_exception: {e}')
+        return jsonify({'error': 'Error al registrar resolución'}), 500

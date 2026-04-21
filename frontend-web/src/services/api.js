@@ -9,9 +9,8 @@ const api = axios.create({
 
 export const getAdminStats = () => api.get('/admin/stats');
 export const getAdminAttendance = () => api.get('/admin/attendance');
-export const resolveException = (logId, resolutionType, adminId = 1) => {
-  // Por ahora simulado, imprimimos en consola
-  console.log(`[API] Resolviendo incidencia ${logId} como ${resolutionType} (Admin: ${adminId})`);
+export const getPendingExceptions = () => api.get('/admin/exceptions/pending');
+export const resolveException = (logId, resolutionType, adminId = 'a1b2c3d4-0000-0000-0000-000000000002') => {
   return api.post('/admin/exceptions/resolve', { logId, resolutionType, adminId });
 };
 
