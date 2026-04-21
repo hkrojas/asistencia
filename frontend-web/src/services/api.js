@@ -7,6 +7,7 @@ const api = axios.create({
   },
 });
 
+export const adminLogin = (username, password) => api.post('/admin/login', { username, password });
 export const getAdminStats = () => api.get('/admin/stats');
 export const getAdminAttendance = () => api.get('/admin/attendance');
 export const getPendingExceptions = () => api.get('/admin/exceptions/pending');

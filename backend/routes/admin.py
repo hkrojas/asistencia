@@ -145,6 +145,28 @@ def resolve_exception():
     except Exception as e:
         print(f'[admin] Error en resolve_exception: {e}')
         return jsonify({'error': 'Error al registrar resolución'}), 500
+@admin_bp.route('/admin/login', methods=['POST'])
+def admin_login():
+    """Valida las credenciales del administrador para el panel web."""
+    from flask import request
+    data = request.json
+    
+    username = data.get('username')
+    password = data.get('password')
+    
+    # Lógica MVP de validación
+    if username == "admin" and password == "Hernandez2026":
+        return jsonify({
+            'success': True,
+            'token': 'admin-token-xyz',
+            'message': 'Login exitoso'
+        }), 200
+        
+    return jsonify({
+        'success': False,
+        'error': 'Credenciales incorrectas'
+    }), 401
+
 @admin_bp.route('/admin/export/csv', methods=['GET'])
 def export_attendance_csv():
     """Genera y descarga un reporte CSV de asistencia con excepciones."""
