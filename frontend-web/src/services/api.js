@@ -7,4 +7,7 @@ const api = axios.create({
   },
 });
 
+export const getAdminStats = () => api.get('/admin/stats');
+export const getAdminAttendance = () => api.get('/admin/attendance');
+
 export default api;

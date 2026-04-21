@@ -17,8 +17,8 @@ def create_app():
     )
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
 
-    # ── CORS — permitir peticiones desde la app móvil ──
-    CORS(app, resources={r"/api/*": {"origins": "*"}})
+    # ── CORS — permitir peticiones desde la app móvil y el panel web ──
+    CORS(app, resources={r"/*": {"origins": "*"}})
 
     # ── Rutas de salud ──
     @app.route('/ping', methods=['GET'])
@@ -40,9 +40,11 @@ def create_app():
     from routes.devices import devices_bp
     from routes.attendance import attendance_bp
     from routes.schedules import schedules_bp
+    from routes.admin import admin_bp
     app.register_blueprint(devices_bp, url_prefix='/v1')
     app.register_blueprint(attendance_bp, url_prefix='/v1')
     app.register_blueprint(schedules_bp, url_prefix='/v1')
+    app.register_blueprint(admin_bp, url_prefix='/v1')
 
     return app
 

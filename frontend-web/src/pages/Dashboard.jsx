@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Download,
   Clock,
@@ -7,66 +7,93 @@ import {
   AlertTriangle,
   CheckCircle2,
   TrendingUp,
+  RotateCw,
+  Building2,
 } from 'lucide-react';
+import { getAdminStats, getAdminAttendance } from '../services/api';
 import './Dashboard.css';
 
-/* ── Datos mock ── */
-const MOCK_RECORDS = [
-  {
-    id: 1,
-    name: 'Juan Pérez',
-    date: '20/04/2026',
-    checkIn: '07:58 AM',
-    checkOut: '05:02 PM',
-    hours: '9h 04m',
-    status: 'puntual',
-  },
-  {
-    id: 2,
-    name: 'María López',
-    date: '20/04/2026',
-    checkIn: '08:23 AM',
-    checkOut: '05:15 PM',
-    hours: '8h 52m',
-    status: 'tardanza',
-  },
-  {
-    id: 3,
-    name: 'Carlos Rivera',
-    date: '20/04/2026',
-    checkIn: '07:45 AM',
-    checkOut: '04:50 PM',
-    hours: '9h 05m',
-    status: 'puntual',
-  },
-];
-
-const MOCK_SUMMARY = {
-  totalEmployees: 24,
-  presentToday: 21,
-  lateToday: 3,
-  avgHours: '8h 42m',
-};
-
 export default function Dashboard() {
-  const [records] = useState(MOCK_RECORDS);
-  const summary = MOCK_SUMMARY;
+  const [records, setRecords] = useState([]);
+  const [stats, setStats] = useState({
+    active_employees: 0,
+    present_today: 0,
+    total_buildings: 0,
+    avg_punctuality: 0,
+  });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const [statsRes, attendanceRes] = await Promise.all([
+        getAdminStats(),
+        getAdminAttendance(),
+      ]);
+      setStats(statsRes.data);
+      setRecords(attendanceRes.data);
+      setError(null);
+    } catch (err) {
+      console.error('Error fetching dashboard data:', err);
+      setError('No se pudo conectar con el servidor. Verifica que el backend esté corriendo.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+    // Auto-refresh cada 30 segundos
+    const interval = setInterval(fetchData, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const formatDate = (isoString) => {
+    const date = new Date(isoString);
+    return date.toLocaleDateString('es-HN');
+  };
+
+  const formatTime = (isoString) => {
+    const date = new Date(isoString);
+    return date.toLocaleTimeString('es-HN', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    });
+  };
+
+  if (error) {
+    return (
+      <div className="dashboard-error">
+        <AlertTriangle size={48} />
+        <h2>Error de Conexión</h2>
+        <p>{error}</p>
+        <button onClick={fetchData} className="btn-retry">
+          <RotateCw size={18} /> Reintentar
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="dashboard">
       {/* ── Header ── */}
       <header className="dashboard-header">
         <div className="header-left">
-          <img src="/logo.png" alt="Grupo Hernández" className="header-logo" />
+          <img src="/logo-trans.png" alt="Grupo Hernández" className="header-logo" />
           <div>
             <h1 className="header-title">Panel de Asistencia</h1>
             <p className="header-subtitle">Grupo Hernández · Recursos Humanos</p>
           </div>
         </div>
-        <button className="btn-export" onClick={() => alert('Exportar — Próximamente')}>
-          <Download size={18} />
-          Exportar a CSV
-        </button>
+        <div className="header-actions">
+          {loading && <RotateCw className="animate-spin text-gold" size={20} />}
+          <button className="btn-export" onClick={() => alert('Exportar — Próximamente')}>
+            <Download size={18} />
+            Exportar a CSV
+          </button>
+        </div>
       </header>
 
       {/* ── Summary Cards ── */}
@@ -76,8 +103,8 @@ export default function Dashboard() {
             <Users size={22} />
           </div>
           <div className="summary-info">
-            <span className="summary-value">{summary.totalEmployees}</span>
-            <span className="summary-label">Empleados</span>
+            <span className="summary-value">{stats.active_employees}</span>
+            <span className="summary-label">Empleados Activos</span>
           </div>
         </div>
 
@@ -86,28 +113,28 @@ export default function Dashboard() {
             <CheckCircle2 size={22} />
           </div>
           <div className="summary-info">
-            <span className="summary-value">{summary.presentToday}</span>
+            <span className="summary-value">{stats.present_today}</span>
             <span className="summary-label">Presentes Hoy</span>
           </div>
         </div>
 
         <div className="summary-card">
-          <div className="summary-icon" style={{ background: 'var(--color-warning-bg)', color: 'var(--color-warning)' }}>
-            <AlertTriangle size={22} />
+          <div className="summary-icon" style={{ background: 'rgba(99,102,241,0.1)', color: '#6366f1' }}>
+            <Building2 size={22} />
           </div>
           <div className="summary-info">
-            <span className="summary-value">{summary.lateToday}</span>
-            <span className="summary-label">Tardanzas</span>
+            <span className="summary-value">{stats.total_buildings}</span>
+            <span className="summary-label">Sedes Operativas</span>
           </div>
         </div>
 
         <div className="summary-card">
-          <div className="summary-icon" style={{ background: 'rgba(99,102,241,0.1)', color: '#6366f1' }}>
+          <div className="summary-icon" style={{ background: 'var(--color-gold-light)', color: 'var(--color-gold)' }}>
             <TrendingUp size={22} />
           </div>
           <div className="summary-info">
-            <span className="summary-value">{summary.avgHours}</span>
-            <span className="summary-label">Promedio Horas</span>
+            <span className="summary-value">{stats.avg_punctuality}%</span>
+            <span className="summary-label">Puntualidad Global</span>
           </div>
         </div>
       </section>
@@ -117,7 +144,7 @@ export default function Dashboard() {
         <div className="table-header">
           <div className="table-title-row">
             <CalendarDays size={20} />
-            <h2 className="table-title">Registros del Día</h2>
+            <h2 className="table-title">Última Actividad (Tiempo Real)</h2>
           </div>
           <span className="table-date">
             {new Date().toLocaleDateString('es-HN', {
@@ -134,38 +161,44 @@ export default function Dashboard() {
             <thead>
               <tr>
                 <th>Empleado</th>
+                <th>Sede / Edificio</th>
+                <th>Acción</th>
                 <th>Fecha</th>
-                <th>
-                  <Clock size={14} className="th-icon" />
-                  Ingreso
-                </th>
-                <th>
-                  <Clock size={14} className="th-icon" />
-                  Salida
-                </th>
-                <th>Horas Efectivas</th>
-                <th>Estado</th>
+                <th>Hora</th>
+                <th>Método</th>
               </tr>
             </thead>
             <tbody>
-              {records.map((r) => (
-                <tr key={r.id}>
-                  <td className="cell-name">{r.name}</td>
-                  <td>{r.date}</td>
-                  <td>{r.checkIn}</td>
-                  <td>{r.checkOut}</td>
-                  <td className="cell-hours">{r.hours}</td>
-                  <td>
-                    <span className={`badge ${r.status === 'puntual' ? 'badge-success' : 'badge-warning'}`}>
-                      {r.status === 'puntual' ? (
-                        <><CheckCircle2 size={13} /> Puntual</>
-                      ) : (
-                        <><AlertTriangle size={13} /> Tardanza</>
-                      )}
-                    </span>
+              {records.length > 0 ? (
+                records.map((r) => (
+                  <tr key={r.id}>
+                    <td className="cell-name">{r.employee}</td>
+                    <td>{r.building}</td>
+                    <td>
+                      <span className={`badge ${r.action === 'check_in' ? 'badge-success' : 'badge-warning'}`}>
+                        {r.action === 'check_in' ? (
+                          <><CheckCircle2 size={13} /> Entrada</>
+                        ) : (
+                          <><Clock size={13} /> Salida</>
+                        )}
+                      </span>
+                    </td>
+                    <td>{formatDate(r.time)}</td>
+                    <td className="cell-hours">{formatTime(r.time)}</td>
+                    <td>
+                      <span className="badge badge-neutral">
+                        {r.method}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan="6" style={{ textAlign: 'center', padding: '2rem' }}>
+                    No hay registros de asistencia para mostrar hoy.
                   </td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>
