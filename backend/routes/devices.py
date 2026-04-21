@@ -21,9 +21,14 @@ def verify_device():
                    d.is_active,
                    e.id         AS employee_id,
                    e.full_name,
-                   e.status     AS employee_status
+                   e.status     AS employee_status,
+                   r.name       AS role_name,
+                   b.id         AS building_id,
+                   b.name       AS building_name
               FROM devices d
               JOIN employees e ON e.id = d.employee_id
+              JOIN roles r     ON r.id = e.role_id
+              LEFT JOIN buildings b ON b.id = e.primary_building_id
              WHERE d.device_token = %s
             """,
             (token,)
@@ -42,6 +47,9 @@ def verify_device():
             'valid': True,
             'employeeName': row['full_name'],
             'employeeId': str(row['employee_id']),
+            'role': row['role_name'],
+            'building': row['building_name'],
+            'buildingId': str(row['building_id']) if row['building_id'] else None
         }), 200
 
     except Exception as e:

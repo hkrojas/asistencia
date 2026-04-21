@@ -8,8 +8,9 @@ def _get_employee_from_token(token):
     """Helper: obtiene employee_id y device_id a partir del device_token."""
     return query_one(
         """
-        SELECT d.id AS device_id, d.employee_id
+        SELECT d.id AS device_id, d.employee_id, e.primary_building_id
           FROM devices d
+          JOIN employees e ON e.id = d.employee_id
          WHERE d.device_token = %s
            AND d.is_active = TRUE
         """,
@@ -85,11 +86,11 @@ def register_attendance():
 
         row = execute(
             """
-            INSERT INTO attendance_logs (employee_id, device_id, action_type)
-            VALUES (%s, %s, %s)
+            INSERT INTO attendance_logs (employee_id, device_id, building_id, action_type, is_manual_override)
+            VALUES (%s, %s, %s, %s, %s)
             RETURNING id, action_type, timestamp
             """,
-            (device['employee_id'], device['device_id'], action_type)
+            (device['employee_id'], device['device_id'], device['primary_building_id'], action_type, False)
         )
 
         return jsonify({

@@ -41,12 +41,14 @@ def get_weekly_schedule():
         # Obtener horarios ordenados por día
         rows = query_all(
             """
-            SELECT day_of_week,
-                   to_char(start_time, 'HH24:MI') AS start_time,
-                   to_char(end_time, 'HH24:MI')   AS end_time
-              FROM schedules
-             WHERE employee_id = %s
-             ORDER BY day_of_week
+            SELECT s.day_of_week,
+                   to_char(s.start_time, 'HH24:MI') AS start_time,
+                   to_char(s.end_time, 'HH24:MI')   AS end_time,
+                   b.name                           AS building_name
+              FROM schedules s
+              LEFT JOIN buildings b ON b.id = s.building_id
+             WHERE s.employee_id = %s
+             ORDER BY s.day_of_week
             """,
             (device['employee_id'],)
         )
@@ -59,6 +61,7 @@ def get_weekly_schedule():
                 'day_label': DAY_LABELS.get(dow, ''),
                 'start_time': r['start_time'],
                 'end_time': r['end_time'],
+                'building': r['building_name']
             })
 
         return jsonify({
