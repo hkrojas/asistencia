@@ -1,5 +1,6 @@
 from flask import Blueprint, request, jsonify
 from utils.db import query_one, execute
+from services.biometrics import verify_face
 
 attendance_bp = Blueprint('attendance', __name__)
 
@@ -82,15 +83,26 @@ def register_attendance():
         if not device:
             return jsonify({'success': False, 'error': 'Dispositivo no válido'}), 401
 
-        # photo_s3_key = data.get('photo')  # Futuro: subir a S3 y guardar key
+        # ── Validación Biométrica ──
+        photo_base64 = data.get('photo')
+        biometric_result = verify_face(photo_base64, device['employee_id'])
 
+        if not biometric_result.get('match'):
+            return jsonify({
+                'success': False, 
+                'error': 'Validación biométrica fallida. El rostro no coincide.'
+            }), 401
+
+        confidence = biometric_result.get('confidence', 0)
+
+        # ── Inserción en DB ──
         row = execute(
             """
-            INSERT INTO attendance_logs (employee_id, device_id, building_id, action_type, is_manual_override)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO attendance_logs (employee_id, device_id, building_id, action_type, is_manual_override, confidence_score)
+            VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING id, action_type, timestamp
             """,
-            (device['employee_id'], device['device_id'], device['primary_building_id'], action_type, False)
+            (device['employee_id'], device['device_id'], device['primary_building_id'], action_type, False, confidence)
         )
 
         return jsonify({
@@ -100,7 +112,7 @@ def register_attendance():
                 'id': str(row['id']),
                 'action_type': row['action_type'],
                 'timestamp': row['timestamp'].isoformat(),
-                'confidence_score': None,
+                'confidence_score': confidence,
             }
         }), 201
 
