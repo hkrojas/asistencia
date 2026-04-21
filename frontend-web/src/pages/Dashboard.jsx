@@ -10,7 +10,7 @@ import {
   RotateCw,
   Building2,
 } from 'lucide-react';
-import { getAdminStats, getAdminAttendance } from '../services/api';
+import { getAdminStats, getAdminAttendance, downloadAttendanceReport } from '../services/api';
 import ExceptionsManager from '../components/ExceptionsManager';
 import './Dashboard.css';
 
@@ -40,6 +40,15 @@ export default function Dashboard() {
       setError('No se pudo conectar con el servidor. Verifica que el backend esté corriendo.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleExport = async () => {
+    try {
+      await downloadAttendanceReport();
+    } catch (err) {
+      console.error('Error exporting CSV:', err);
+      alert('Error al exportar el reporte');
     }
   };
 
@@ -90,7 +99,7 @@ export default function Dashboard() {
         </div>
         <div className="header-actions">
           {loading && <RotateCw className="animate-spin text-gold" size={20} />}
-          <button className="btn-export" onClick={() => alert('Exportar — Próximamente')}>
+          <button className="btn-export" onClick={handleExport}>
             <Download size={18} />
             Exportar a CSV
           </button>

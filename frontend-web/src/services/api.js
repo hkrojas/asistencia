@@ -14,4 +14,15 @@ export const resolveException = (logId, resolutionType, adminId = 'a1b2c3d4-0000
   return api.post('/admin/exceptions/resolve', { logId, resolutionType, adminId });
 };
 
+export const downloadAttendanceReport = async () => {
+  const response = await api.get('/admin/export/csv', { responseType: 'blob' });
+  const url = window.URL.createObjectURL(new Blob([response.data]));
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', 'reporte_asistencia.csv');
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+};
+
 export default api;

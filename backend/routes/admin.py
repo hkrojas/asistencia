@@ -1,4 +1,6 @@
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, Response
+import csv
+import io
 from utils.db import query_one, query_all
 
 admin_bp = Blueprint('admin', __name__)
@@ -141,3 +143,51 @@ def resolve_exception():
     except Exception as e:
         print(f'[admin] Error en resolve_exception: {e}')
         return jsonify({'error': 'Error al registrar resolución'}), 500
+@admin_bp.route('/admin/export/csv', methods=['GET'])
+def export_attendance_csv():
+    """Genera y descarga un reporte CSV de asistencia con excepciones."""
+    try:
+        rows = query_all("""
+            SELECT 
+                e.full_name,
+                b.name AS building,
+                al.timestamp::date AS date,
+                MIN(al.timestamp) FILTER (WHERE al.action_type = 'check_in') AS check_in,
+                MAX(al.timestamp) FILTER (WHERE al.action_type = 'check_out') AS check_out,
+                te.exception_type AS resolution,
+                te.minutes_adjusted AS extra_minutes
+            FROM attendance_logs al
+            JOIN employees e ON e.id = al.employee_id
+            LEFT JOIN buildings b ON b.id = al.building_id
+            LEFT JOIN time_exceptions te ON te.employee_id = e.id AND te.date = al.timestamp::date
+            GROUP BY e.full_name, b.name, al.timestamp::date, te.exception_type, te.minutes_adjusted
+            ORDER BY al.timestamp::date DESC
+        """)
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        # Header
+        writer.writerow(['Empleado', 'Sede', 'Fecha', 'Entrada', 'Salida', 'Resolución WFM', 'Minutos Extra'])
+        
+        for r in rows:
+            writer.writerow([
+                r['full_name'],
+                r['building'] or 'N/A',
+                r['date'].isoformat(),
+                r['check_in'].strftime('%H:%M') if r['check_in'] else '--:--',
+                r['check_out'].strftime('%H:%M') if r['check_out'] else '--:--',
+                r['resolution'] or 'Normal',
+                r['extra_minutes'] or 0
+            ])
+            
+        output.seek(0)
+        return Response(
+            output.getvalue(),
+            mimetype="text/csv",
+            headers={"Content-Disposition": "attachment; filename=reporte_asistencia.csv"}
+        )
+        
+    except Exception as e:
+        print(f'[admin] Error en export_attendance_csv: {e}')
+        return jsonify({'error': 'Error al generar CSV'}), 500
