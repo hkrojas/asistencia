@@ -12,9 +12,9 @@ def get_admin_stats():
         stats = query_one("""
             SELECT 
                 (SELECT COUNT(*) FROM employees WHERE status = 'active') as active_employees,
-                (SELECT COUNT(DISTINCT employee_id) FROM attendance_logs 
-                 WHERE timestamp::date = CURRENT_DATE 
-                 AND action_type = 'check_in') as present_today,
+                (SELECT COUNT(DISTINCT employee_id) FROM raw_punches 
+                 WHERE punch_time::date = CURRENT_DATE 
+                 AND punch_type = 'in') as present_today,
                 (SELECT COUNT(*) FROM buildings) as total_buildings
         """)
         
@@ -37,17 +37,16 @@ def get_admin_attendance():
     try:
         rows = query_all("""
             SELECT 
-                al.id,
+                rp.id,
                 e.full_name AS employee_name,
                 b.name      AS building_name,
-                al.action_type,
-                al.timestamp,
-                al.is_manual_override,
-                al.confidence_score
-            FROM attendance_logs al
-            JOIN employees e ON e.id = al.employee_id
-            LEFT JOIN buildings b ON b.id = al.building_id
-            ORDER BY al.timestamp DESC
+                rp.punch_type,
+                rp.punch_time,
+                rp.confidence_score
+            FROM raw_punches rp
+            JOIN employees e ON e.id = rp.employee_id
+            LEFT JOIN buildings b ON b.id = e.primary_building_id
+            ORDER BY rp.punch_time DESC
             LIMIT 50
         """)
         
@@ -58,9 +57,9 @@ def get_admin_attendance():
                 'id': str(r['id']),
                 'employee': r['employee_name'],
                 'building': r['building_name'] or 'N/A',
-                'action': r['action_type'],
-                'time': r['timestamp'].isoformat(),
-                'method': 'Manual' if r['is_manual_override'] else 'Biométrico',
+                'action': r['punch_type'],
+                'time': r['punch_time'].isoformat(),
+                'method': 'Biométrico',
                 'confidence': r['confidence_score']
             })
             
@@ -77,22 +76,22 @@ def get_pending_exceptions():
         # Buscamos marcaciones de check_out que excedan por > 15 min el horario planificado
         rows = query_all("""
             SELECT 
-                al.id AS log_id,
+                rp.id AS log_id,
                 e.id AS employee_id,
                 e.full_name AS employee_name,
                 s.start_time,
                 s.end_time,
-                al.timestamp::time AS actual_out,
-                al.timestamp::date AS date,
-                EXTRACT(EPOCH FROM (al.timestamp::time - s.end_time))/60 AS excess_minutes
-            FROM attendance_logs al
-            JOIN employees e ON e.id = al.employee_id
-            JOIN schedules s ON s.employee_id = e.id AND s.day_of_week = EXTRACT(DOW FROM al.timestamp)
-            LEFT JOIN time_exceptions te ON te.employee_id = e.id AND te.date = al.timestamp::date
-            WHERE al.action_type = 'check_out'
+                rp.punch_time::time AS actual_out,
+                rp.punch_time::date AS date,
+                EXTRACT(EPOCH FROM (rp.punch_time::time - s.end_time))/60 AS excess_minutes
+            FROM raw_punches rp
+            JOIN employees e ON e.id = rp.employee_id
+            JOIN schedules s ON s.employee_id = e.id AND s.day_of_week = EXTRACT(DOW FROM rp.punch_time)
+            LEFT JOIN time_exceptions te ON te.employee_id = e.id AND te.date = rp.punch_time::date
+            WHERE rp.punch_type = 'out'
             AND te.id IS NULL
-            AND (al.timestamp::time - s.end_time) > INTERVAL '15 minutes'
-            ORDER BY al.timestamp DESC
+            AND (rp.punch_time::time - s.end_time) > INTERVAL '15 minutes'
+            ORDER BY rp.punch_time DESC
         """)
         
         results = []
@@ -126,7 +125,7 @@ def resolve_exception():
         admin_id = data.get('adminId', 'a1b2c3d4-0000-0000-0000-000000000002') # Admin RRHH por defecto
         
         # Primero obtenemos el employee_id y la fecha del log original
-        log_data = query_one("SELECT employee_id, timestamp::date FROM attendance_logs WHERE id = %s", (log_id,))
+        log_data = query_one("SELECT employee_id, punch_time::date FROM raw_punches WHERE id = %s", (log_id,))
         
         if not log_data:
             return jsonify({'error': 'Log no encontrado'}), 404
@@ -138,7 +137,7 @@ def resolve_exception():
             INSERT INTO time_exceptions (employee_id, date, exception_type, minutes_adjusted, approved_by, reason)
             VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING id
-        """, (log_data['employee_id'], log_data['timestamp'], res_type, minutes, admin_id, 'Resolución desde Panel Web'))
+        """, (log_data['employee_id'], log_data['punch_time'], res_type, minutes, admin_id, 'Resolución desde Panel Web'))
         
         return jsonify({'message': 'Resolución registrada con éxito'}), 200
         
@@ -175,18 +174,18 @@ def export_attendance_csv():
             SELECT 
                 e.full_name,
                 b.name AS building,
-                al.timestamp::date AS date,
-                MIN(al.timestamp) FILTER (WHERE al.action_type = 'check_in') AS check_in,
-                MAX(al.timestamp) FILTER (WHERE al.action_type = 'check_out') AS check_out,
+                rp.punch_time::date AS date,
+                MIN(rp.punch_time) FILTER (WHERE rp.punch_type = 'in') AS first_in,
+                MAX(rp.punch_time) FILTER (WHERE rp.punch_type = 'out') AS last_out,
                 te.exception_type AS resolution,
                 te.minutes_adjusted AS extra_minutes,
-                AVG(al.confidence_score) AS bio_avg
-            FROM attendance_logs al
-            JOIN employees e ON e.id = al.employee_id
-            LEFT JOIN buildings b ON b.id = al.building_id
-            LEFT JOIN time_exceptions te ON te.employee_id = e.id AND te.date = al.timestamp::date
-            GROUP BY e.full_name, b.name, al.timestamp::date, te.exception_type, te.minutes_adjusted
-            ORDER BY al.timestamp::date DESC
+                AVG(rp.confidence_score) AS bio_avg
+            FROM raw_punches rp
+            JOIN employees e ON e.id = rp.employee_id
+            LEFT JOIN buildings b ON b.id = e.primary_building_id
+            LEFT JOIN time_exceptions te ON te.employee_id = e.id AND te.date = rp.punch_time::date
+            GROUP BY e.full_name, b.name, rp.punch_time::date, te.exception_type, te.minutes_adjusted
+            ORDER BY rp.punch_time::date DESC
         """)
 
         output = io.StringIO()
@@ -200,8 +199,8 @@ def export_attendance_csv():
                 r['full_name'],
                 r['building'] or 'N/A',
                 r['date'].isoformat(),
-                r['check_in'].strftime('%H:%M') if r['check_in'] else '--:--',
-                r['check_out'].strftime('%H:%M') if r['check_out'] else '--:--',
+                r['first_in'].strftime('%H:%M') if r['first_in'] else '--:--',
+                r['last_out'].strftime('%H:%M') if r['last_out'] else '--:--',
                 r['resolution'] or 'Normal',
                 r['extra_minutes'] or 0,
                 f"{r['bio_avg']:.1f}%" if r['bio_avg'] else "N/A"

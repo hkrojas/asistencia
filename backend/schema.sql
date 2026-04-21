@@ -1,13 +1,16 @@
 -- ============================================================
--- Asistencia App — PostgreSQL Schema (V2 - WFM Expansion)
+-- Asistencia App — PostgreSQL Schema (V3 - WFM Core Domain)
 -- ============================================================
 
 -- Extensión para UUIDs
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- Limpieza preventiva
+DROP TABLE IF EXISTS audit_logs CASCADE;
+DROP TABLE IF EXISTS daily_timesheets CASCADE;
 DROP TABLE IF EXISTS time_exceptions CASCADE;
-DROP TABLE IF EXISTS attendance_logs CASCADE;
+DROP TABLE IF EXISTS raw_punches CASCADE;
+DROP TABLE IF EXISTS attendance_logs CASCADE; -- Deprecated
 DROP TABLE IF EXISTS schedules CASCADE;
 DROP TABLE IF EXISTS devices CASCADE;
 DROP TABLE IF EXISTS employees CASCADE;
@@ -25,11 +28,11 @@ CREATE TABLE buildings (
 );
 
 -- ──────────────────────────────────────────────────────────────
--- 2. roles — Niveles de acceso/permisos
+-- 2. roles — Niveles de acceso (Sistema)
 -- ──────────────────────────────────────────────────────────────
 CREATE TABLE roles (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name            VARCHAR(50) NOT NULL UNIQUE -- 'worker', 'building_admin', 'hr_admin'
+    name            VARCHAR(50) NOT NULL UNIQUE -- 'Admin', 'HR', 'Kiosk'
 );
 
 -- ──────────────────────────────────────────────────────────────
@@ -38,6 +41,7 @@ CREATE TABLE roles (
 CREATE TABLE employees (
     id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     full_name           VARCHAR(150) NOT NULL,
+    job_title           VARCHAR(100), -- Cargo operativo
     status              VARCHAR(20)  NOT NULL DEFAULT 'active'
                             CHECK (status IN ('active', 'inactive', 'suspended')),
     role_id             UUID         NOT NULL REFERENCES roles(id),
@@ -48,7 +52,7 @@ CREATE TABLE employees (
 );
 
 -- ──────────────────────────────────────────────────────────────
--- 4. devices — Dispositivos vinculados a empleados
+-- 4. devices — Dispositivos / Quioscos
 -- ──────────────────────────────────────────────────────────────
 CREATE TABLE devices (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -59,42 +63,77 @@ CREATE TABLE devices (
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_devices_token ON devices (device_token);
-
 -- ──────────────────────────────────────────────────────────────
--- 5. schedules — Horarios semanales asignados
+-- 5. schedules — Horarios Planificados
 -- ──────────────────────────────────────────────────────────────
 CREATE TABLE schedules (
-    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    employee_id     UUID         NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-    building_id     UUID         REFERENCES buildings(id) ON DELETE SET NULL,
-    day_of_week     SMALLINT     NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
-    start_time      TIME         NOT NULL,
-    end_time        TIME         NOT NULL,
+    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    employee_id         UUID         NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    building_id         UUID         REFERENCES buildings(id) ON DELETE SET NULL,
+    day_of_week         SMALLINT     NOT NULL CHECK (day_of_week BETWEEN 0 AND 6),
+    start_time          TIME         NOT NULL,
+    end_time            TIME         NOT NULL,
+    is_overnight        BOOLEAN      NOT NULL DEFAULT FALSE,
+    tolerance_minutes   INTEGER      NOT NULL DEFAULT 15,
     UNIQUE (employee_id, day_of_week)
 );
 
 -- ──────────────────────────────────────────────────────────────
--- 6. attendance_logs — Registros de asistencia
+-- 6. raw_punches — Eventos de Marcación (Inmutable)
 -- ──────────────────────────────────────────────────────────────
-CREATE TABLE attendance_logs (
+CREATE TABLE raw_punches (
     id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    device_id         UUID         REFERENCES devices(id) ON DELETE SET NULL,
     employee_id       UUID         NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-    device_id         UUID         NOT NULL REFERENCES devices(id)   ON DELETE SET NULL,
-    building_id       UUID         REFERENCES buildings(id) ON DELETE SET NULL,
-    action_type       VARCHAR(10)  NOT NULL CHECK (action_type IN ('check_in', 'check_out')),
-    timestamp         TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    is_manual_override BOOLEAN     NOT NULL DEFAULT FALSE,
-    photo_s3_key      VARCHAR(512),
+    punch_time        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    punch_type        VARCHAR(10)  NOT NULL CHECK (punch_type IN ('in', 'out')),
     confidence_score  NUMERIC(5,2),
+    offline_sync      BOOLEAN      NOT NULL DEFAULT FALSE,
+    client_uuid       UUID         UNIQUE, -- Idempotencia desde el cliente
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_attendance_employee  ON attendance_logs (employee_id);
-CREATE INDEX idx_attendance_timestamp ON attendance_logs (timestamp);
+CREATE INDEX idx_punches_employee ON raw_punches (employee_id);
+CREATE INDEX idx_punches_time     ON raw_punches (punch_time);
 
 -- ──────────────────────────────────────────────────────────────
--- 7. time_exceptions — Excepciones (permisos, horas extra, etc.)
+-- 7. daily_timesheets — Jornadas Interpretadas
+-- ──────────────────────────────────────────────────────────────
+CREATE TYPE timesheet_status AS ENUM ('incomplete', 'perfect', 'exception', 'resolved');
+
+CREATE TABLE daily_timesheets (
+    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    employee_id       UUID         NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    logical_date      DATE         NOT NULL,
+    schedule_id       UUID         REFERENCES schedules(id) ON DELETE SET NULL,
+    first_punch_in    TIMESTAMPTZ,
+    last_punch_out    TIMESTAMPTZ,
+    regular_minutes   INTEGER      DEFAULT 0,
+    overtime_minutes  INTEGER      DEFAULT 0,
+    deficit_minutes   INTEGER      DEFAULT 0,
+    status            timesheet_status NOT NULL DEFAULT 'incomplete',
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    UNIQUE (employee_id, logical_date)
+);
+
+-- ──────────────────────────────────────────────────────────────
+-- 8. audit_logs — Registro de cambios (Gobernanza)
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE audit_logs (
+    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    table_name        VARCHAR(50)  NOT NULL,
+    record_id         UUID         NOT NULL,
+    action            VARCHAR(10)  NOT NULL CHECK (action IN ('INSERT', 'UPDATE', 'DELETE')),
+    old_data          JSONB,
+    new_data          JSONB,
+    changed_by_id     UUID         REFERENCES employees(id) ON DELETE SET NULL,
+    reason            TEXT,
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+-- ──────────────────────────────────────────────────────────────
+-- 9. time_exceptions — Resoluciones WFM
 -- ──────────────────────────────────────────────────────────────
 CREATE TABLE time_exceptions (
     id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -114,9 +153,9 @@ CREATE TABLE time_exceptions (
 
 -- Roles
 INSERT INTO roles (id, name) VALUES 
-('00000000-0000-0000-0000-000000000001', 'worker'),
-('00000000-0000-0000-0000-000000000002', 'building_admin'),
-('00000000-0000-0000-0000-000000000003', 'hr_admin');
+('00000000-0000-0000-0000-000000000001', 'Worker'),
+('00000000-0000-0000-0000-000000000002', 'BuildingAdmin'),
+('00000000-0000-0000-0000-000000000003', 'HRAdmin');
 
 -- Buildings
 INSERT INTO buildings (id, name, address) VALUES
@@ -124,14 +163,12 @@ INSERT INTO buildings (id, name, address) VALUES
 ('e0e0e0e0-0000-0000-0000-000000000002', 'Almacén Norte', 'Parque Industrial Sur');
 
 -- Employees
--- Juan Pérez (Worker)
-INSERT INTO employees (id, full_name, status, role_id, primary_building_id)
-VALUES ('a1b2c3d4-0000-0000-0000-000000000001', 'Juan Pérez', 'active', 
+INSERT INTO employees (id, full_name, job_title, status, role_id, primary_building_id)
+VALUES ('a1b2c3d4-0000-0000-0000-000000000001', 'Juan Pérez', 'Conserje', 'active', 
         '00000000-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001');
 
--- Admin RRHH
-INSERT INTO employees (id, full_name, status, role_id, primary_building_id)
-VALUES ('a1b2c3d4-0000-0000-0000-000000000002', 'Admin RRHH', 'active', 
+INSERT INTO employees (id, full_name, job_title, status, role_id, primary_building_id)
+VALUES ('a1b2c3d4-0000-0000-0000-000000000002', 'Admin RRHH', 'Gerente de Compensaciones', 'active', 
         '00000000-0000-0000-0000-000000000003', 'e0e0e0e0-0000-0000-0000-000000000001');
 
 -- Devices
@@ -144,15 +181,10 @@ VALUES (
 );
 
 -- Schedules
-INSERT INTO schedules (employee_id, building_id, day_of_week, start_time, end_time)
+INSERT INTO schedules (id, employee_id, building_id, day_of_week, start_time, end_time)
 VALUES
-    ('a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 0, '08:00', '17:00'),
-    ('a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 1, '08:00', '17:00'),
-    ('a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 2, '08:00', '17:00'),
-    ('a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 3, '08:00', '17:00'),
-    ('a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 4, '08:00', '17:00');
-
--- Time Exception
-INSERT INTO time_exceptions (employee_id, date, exception_type, minutes_adjusted, approved_by, reason)
-VALUES ('a1b2c3d4-0000-0000-0000-000000000001', CURRENT_DATE, 'medical', 0, 
-        'a1b2c3d4-0000-0000-0000-000000000002', 'Cita odontológica');
+    ('c0e0e0e0-0000-0000-0000-000000000001', 'a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 0, '08:00', '17:00'),
+    ('c0e0e0e0-0000-0000-0000-000000000002', 'a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 1, '08:00', '17:00'),
+    ('c0e0e0e0-0000-0000-0000-000000000003', 'a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 2, '08:00', '17:00'),
+    ('c0e0e0e0-0000-0000-0000-000000000004', 'a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 3, '08:00', '17:00'),
+    ('c0e0e0e0-0000-0000-0000-000000000005', 'a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 4, '08:00', '17:00');

@@ -35,11 +35,11 @@ def get_attendance_state():
         # Buscar el último registro de HOY para este empleado
         last = query_one(
             """
-            SELECT action_type, timestamp
-              FROM attendance_logs
+            SELECT punch_type, punch_time
+              FROM raw_punches
              WHERE employee_id = %s
-               AND timestamp::date = CURRENT_DATE
-             ORDER BY timestamp DESC
+               AND punch_time::date = CURRENT_DATE
+             ORDER BY punch_time DESC
              LIMIT 1
             """,
             (device['employee_id'],)
@@ -48,11 +48,11 @@ def get_attendance_state():
         if not last:
             return jsonify({'action': 'check_in', 'lastRecord': None}), 200
 
-        # Si el último fue check_in → le toca check_out, y viceversa
-        next_action = 'check_out' if last['action_type'] == 'check_in' else 'check_in'
+        # Si el último fue in → le toca out, y viceversa
+        next_action = 'out' if last['punch_type'] == 'in' else 'in'
         return jsonify({
             'action': next_action,
-            'lastRecord': last['timestamp'].isoformat() if last['timestamp'] else None,
+            'lastRecord': last['punch_time'].isoformat() if last['punch_time'] else None,
         }), 200
 
     except Exception as e:
@@ -95,23 +95,27 @@ def register_attendance():
 
         confidence = biometric_result.get('confidence', 0)
 
+        punch_type = 'in' if action_type in ('check_in', 'in') else 'out'
+        client_uuid = data.get('client_uuid') # Para idempotencia
+
         # ── Inserción en DB ──
         row = execute(
             """
-            INSERT INTO attendance_logs (employee_id, device_id, building_id, action_type, is_manual_override, confidence_score)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            RETURNING id, action_type, timestamp
+            INSERT INTO raw_punches (employee_id, device_id, punch_type, confidence_score, client_uuid)
+            VALUES (%s, %s, %s, %s, %s)
+            ON CONFLICT (client_uuid) DO UPDATE SET created_at = EXCLUDED.created_at -- Idempotencia
+            RETURNING id, punch_type, punch_time
             """,
-            (device['employee_id'], device['device_id'], device['primary_building_id'], action_type, False, confidence)
+            (device['employee_id'], device['device_id'], punch_type, confidence, client_uuid)
         )
 
         return jsonify({
             'success': True,
-            'message': f'{"Ingreso" if action_type == "check_in" else "Salida"} registrado correctamente.',
+            'message': f'{"Ingreso" if punch_type == "in" else "Salida"} registrado correctamente.',
             'record': {
                 'id': str(row['id']),
-                'action_type': row['action_type'],
-                'timestamp': row['timestamp'].isoformat(),
+                'punch_type': row['punch_type'],
+                'timestamp': row['punch_time'].isoformat(),
                 'confidence_score': confidence,
             }
         }), 201

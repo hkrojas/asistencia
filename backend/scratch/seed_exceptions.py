@@ -12,7 +12,6 @@ def seed_exceptions():
     cur = conn.cursor(cursor_factory=RealDictCursor)
     
     employee_id = 'a1b2c3d4-0000-0000-0000-000000000001' # Juan Pérez
-    building_id = 'e0e0e0e0-0000-0000-0000-000000000001' # Oficina Central
     today = date.today()
     yesterday = today - timedelta(days=1)
     
@@ -23,26 +22,26 @@ def seed_exceptions():
 
     print(f"Limpiando datos previos de {employee_id} para hoy y ayer...")
     cur.execute("DELETE FROM time_exceptions WHERE employee_id = %s AND date >= %s", (employee_id, yesterday))
-    cur.execute("DELETE FROM attendance_logs WHERE employee_id = %s AND timestamp::date >= %s", (employee_id, yesterday))
+    cur.execute("DELETE FROM raw_punches WHERE employee_id = %s AND punch_time::date >= %s", (employee_id, yesterday))
     
     records = [
-        (employee_id, device_id, building_id, datetime.combine(today, time(8, 5)), 'check_in'),
-        (employee_id, device_id, building_id, datetime.combine(today, time(19, 45)), 'check_out'),
-        (employee_id, device_id, building_id, datetime.combine(yesterday, time(8, 0)), 'check_in'),
-        (employee_id, device_id, building_id, datetime.combine(yesterday, time(20, 30)), 'check_out')
+        (employee_id, device_id, datetime.combine(today, time(8, 5)), 'in'),
+        (employee_id, device_id, datetime.combine(today, time(19, 45)), 'out'),
+        (employee_id, device_id, datetime.combine(yesterday, time(8, 0)), 'in'),
+        (employee_id, device_id, datetime.combine(yesterday, time(20, 30)), 'out')
     ]
     
-    print("Insertando registros de prueba...")
-    for emp, dev, bld, t, act in records:
+    print("Insertando registros de prueba en raw_punches...")
+    for emp, dev, t, act in records:
         cur.execute(
-            "INSERT INTO attendance_logs (employee_id, device_id, building_id, timestamp, action_type) VALUES (%s, %s, %s, %s, %s)",
-            (emp, dev, bld, t, act)
+            "INSERT INTO raw_punches (employee_id, device_id, punch_time, punch_type, confidence_score) VALUES (%s, %s, %s, %s, %s)",
+            (emp, dev, t, act, 98.5)
         )
     
     conn.commit()
     cur.close()
     conn.close()
-    print("Seeding completado. 2 incidencias deberían estar pendientes.")
+    print("Seeding completado. Las incidencias deberían aparecer en el panel.")
 
 if __name__ == "__main__":
     seed_exceptions()
