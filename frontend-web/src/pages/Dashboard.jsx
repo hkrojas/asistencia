@@ -7,8 +7,10 @@ import {
   AlertTriangle,
   CheckCircle2,
   TrendingUp,
+  ShieldCheck,
   RotateCw,
   Building2,
+  UserX,
 } from 'lucide-react';
 import { getAdminStats, getAdminAttendance, downloadAttendanceReport } from '../services/api';
 import ExceptionsManager from '../components/ExceptionsManager';
@@ -179,6 +181,7 @@ export default function Dashboard() {
                 <th>Fecha</th>
                 <th>Hora</th>
                 <th>Método</th>
+                <th>Biometría</th>
               </tr>
             </thead>
             <tbody>
@@ -203,11 +206,29 @@ export default function Dashboard() {
                         {r.method}
                       </span>
                     </td>
+                    <td>
+                      {r.confidence && r.method !== 'Manual' ? (
+                        <div className={`biometric-status ${
+                          r.confidence >= 95 ? 'text-success' : 
+                          r.confidence >= 90 ? 'text-warning' : 'text-danger'
+                        }`}>
+                          {r.confidence >= 95 ? (
+                            <><ShieldCheck size={14} /> Alta ({r.confidence}%)</>
+                          ) : (
+                            <><AlertCircle size={14} /> Revisar ({r.confidence}%)</>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="biometric-status text-muted">
+                          <UserX size={14} /> Manual / N/D
+                        </div>
+                      )}
+                    </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan="6" style={{ textAlign: 'center', padding: '2rem' }}>
+                  <td colSpan="7" style={{ textAlign: 'center', padding: '2rem' }}>
                     No hay registros de asistencia para mostrar hoy.
                   </td>
                 </tr>

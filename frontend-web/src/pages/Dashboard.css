@@ -240,6 +240,20 @@
   color: var(--color-warning);
 }
 
+/* ── Biometric Status ── */
+.biometric-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.text-success { color: var(--color-success); }
+.text-warning { color: var(--color-warning); }
+.text-danger  { color: #ef4444; }
+.text-muted   { color: var(--color-text-secondary); opacity: 0.7; }
+
 /* ── Responsive ── */
 @media (max-width: 900px) {
   .dashboard { padding: 20px 16px; }

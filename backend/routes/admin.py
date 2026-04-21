@@ -42,7 +42,8 @@ def get_admin_attendance():
                 b.name      AS building_name,
                 al.action_type,
                 al.timestamp,
-                al.is_manual_override
+                al.is_manual_override,
+                al.confidence_score
             FROM attendance_logs al
             JOIN employees e ON e.id = al.employee_id
             LEFT JOIN buildings b ON b.id = al.building_id
@@ -59,7 +60,8 @@ def get_admin_attendance():
                 'building': r['building_name'] or 'N/A',
                 'action': r['action_type'],
                 'time': r['timestamp'].isoformat(),
-                'method': 'Manual' if r['is_manual_override'] else 'Biométrico'
+                'method': 'Manual' if r['is_manual_override'] else 'Biométrico',
+                'confidence': r['confidence_score']
             })
             
         return jsonify(records), 200
@@ -155,7 +157,8 @@ def export_attendance_csv():
                 MIN(al.timestamp) FILTER (WHERE al.action_type = 'check_in') AS check_in,
                 MAX(al.timestamp) FILTER (WHERE al.action_type = 'check_out') AS check_out,
                 te.exception_type AS resolution,
-                te.minutes_adjusted AS extra_minutes
+                te.minutes_adjusted AS extra_minutes,
+                AVG(al.confidence_score) AS bio_avg
             FROM attendance_logs al
             JOIN employees e ON e.id = al.employee_id
             LEFT JOIN buildings b ON b.id = al.building_id
@@ -168,7 +171,7 @@ def export_attendance_csv():
         writer = csv.writer(output)
         
         # Header
-        writer.writerow(['Empleado', 'Sede', 'Fecha', 'Entrada', 'Salida', 'Resolución WFM', 'Minutos Extra'])
+        writer.writerow(['Empleado', 'Sede', 'Fecha', 'Entrada', 'Salida', 'Resolución WFM', 'Minutos Extra', 'Biometría (Avg)'])
         
         for r in rows:
             writer.writerow([
@@ -178,7 +181,8 @@ def export_attendance_csv():
                 r['check_in'].strftime('%H:%M') if r['check_in'] else '--:--',
                 r['check_out'].strftime('%H:%M') if r['check_out'] else '--:--',
                 r['resolution'] or 'Normal',
-                r['extra_minutes'] or 0
+                r['extra_minutes'] or 0,
+                f"{r['bio_avg']:.1f}%" if r['bio_avg'] else "N/A"
             ])
             
         output.seek(0)
