@@ -15,7 +15,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../theme';
 import { getDeviceToken, saveDeviceToken } from '../utils/storage';
-import { checkDeviceToken, fetchCurrentState, sendAttendance } from '../services/api';
+import { checkDeviceToken, fetchCurrentState, sendAttendance, syncOfflinePunches, getPendingSyncCount } from '../services/api';
 
 export default function AttendanceScreen() {
   const cameraRef = useRef(null);
@@ -26,6 +26,7 @@ export default function AttendanceScreen() {
   const [employeeName, setEmployeeName] = useState('');
   const [currentAction, setCurrentAction] = useState('check_in');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
 
   // ── Estado del modal de administrador ──
   const [showAdminModal, setShowAdminModal] = useState(false);
@@ -33,6 +34,18 @@ export default function AttendanceScreen() {
 
   useEffect(() => {
     initializeDevice();
+
+    // Motor de sincronización offline
+    const syncInterval = setInterval(async () => {
+      const synced = await syncOfflinePunches();
+      if (synced > 0) {
+        console.log(`[Sync] Se sincronizaron ${synced} registros.`);
+      }
+      const pending = await getPendingSyncCount();
+      setPendingSyncCount(pending);
+    }, 30000); // 30 segundos
+
+    return () => clearInterval(syncInterval);
   }, []);
 
   async function initializeDevice() {
@@ -48,7 +61,14 @@ export default function AttendanceScreen() {
       const verification = await checkDeviceToken(token);
 
       if (!verification.valid) {
-        setLinked(false);
+        // Si no hay conexión (verification set valid: false but with error), 
+        // no desvinculamos, solo permitimos modo offline si ya estaba vinculado.
+        if (verification.error && verification.error.includes('No se pudo conectar')) {
+           setLinked(true);
+           setEmployeeName('Modo Offline');
+        } else {
+           setLinked(false);
+        }
         setLoading(false);
         return;
       }
@@ -58,6 +78,9 @@ export default function AttendanceScreen() {
 
       const state = await fetchCurrentState(token);
       setCurrentAction(state.action);
+      
+      const pending = await getPendingSyncCount();
+      setPendingSyncCount(pending);
     } catch (error) {
       console.error('[Attendance] Error en inicialización:', error);
       setLinked(false);
@@ -92,13 +115,13 @@ export default function AttendanceScreen() {
     setIsProcessing(true);
 
     try {
-      // Capturar foto (en web no disponible, se simula)
+      // Capturar foto
       let photoBase64 = null;
       if (cameraRef.current) {
         try {
           const photo = await cameraRef.current.takePictureAsync({
             base64: true,
-            quality: 0.7,
+            quality: 0.5, // Reducimos calidad para offline storage
           });
           photoBase64 = photo?.base64 || null;
         } catch (e) {
@@ -106,18 +129,25 @@ export default function AttendanceScreen() {
         }
       }
 
-      // Enviar al backend real
+      // Enviar al backend
       const token = await getDeviceToken();
       const result = await sendAttendance(photoBase64, currentAction, token);
 
       if (result.success) {
         const actionLabel = currentAction === 'check_in' ? 'Ingreso' : 'Salida';
+        const offlineMsg = result.offline ? '\n(Sin conexión - Guardado localmente)' : '';
 
         Alert.alert(
-          '✅ Asistencia registrada',
-          `${actionLabel} registrado con éxito.\n${new Date().toLocaleTimeString()}`,
+          result.offline ? '⚠️ Guardado Offline' : '✅ Asistencia registrada',
+          `${actionLabel} registrado con éxito.${offlineMsg}\n${new Date().toLocaleTimeString()}`,
           [{ text: 'OK' }]
         );
+
+        // Actualizar contador de pendientes si fue offline
+        if (result.offline) {
+          const pending = await getPendingSyncCount();
+          setPendingSyncCount(pending);
+        }
 
         // Alternar acción para la próxima vez
         setCurrentAction((prev) =>
@@ -127,7 +157,7 @@ export default function AttendanceScreen() {
         Alert.alert('Error', result.error || 'No se pudo registrar la asistencia.');
       }
     } catch (error) {
-      Alert.alert('Error', 'No se pudo registrar la asistencia. Intente de nuevo.');
+      Alert.alert('Error', 'No se pudo conectar con el servidor.');
       console.error('[Attendance] Error al registrar:', error);
     } finally {
       setIsProcessing(false);
@@ -255,6 +285,15 @@ export default function AttendanceScreen() {
             ? 'Posiciona tu rostro y marca tu ingreso'
             : 'Posiciona tu rostro y marca tu salida'}
         </Text>
+
+        {pendingSyncCount > 0 && (
+          <View style={styles.syncIndicator}>
+            <Ionicons name="cloud-offline-outline" size={16} color={Colors.warning} />
+            <Text style={styles.syncText}>
+              {pendingSyncCount} marcación{pendingSyncCount > 1 ? 'es' : ''} pendiente{pendingSyncCount > 1 ? 's' : ''} (Sin conexión)
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* Guía visual: marco facial */}
@@ -325,6 +364,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: 'rgba(255,255,255,0.8)',
     textAlign: 'center',
+  },
+  syncIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 152, 0, 0.15)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 20,
+    marginTop: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 152, 0, 0.3)',
+  },
+  syncText: {
+    fontSize: 12,
+    color: Colors.warning || '#FF9800',
+    fontWeight: '600',
+    marginLeft: 6,
   },
 
   // ── Guía facial ──

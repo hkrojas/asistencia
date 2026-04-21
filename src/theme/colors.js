@@ -35,6 +35,11 @@ const Colors = {
   shadow: 'rgba(0, 0, 0, 0.1)',
   overlay: 'rgba(0, 0, 0, 0.5)',
   cardBackground: '#FFFFFF',
+  
+  // Estados
+  warning: '#FF9800',
+  success: '#28a745',
+  error: '#dc3545',
 };
 
 export default Colors;

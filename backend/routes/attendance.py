@@ -97,16 +97,20 @@ def register_attendance():
 
         punch_type = 'in' if action_type in ('check_in', 'in') else 'out'
         client_uuid = data.get('client_uuid') # Para idempotencia
+        offline_sync = data.get('offline_sync', False)
+        # Si es offline_sync, el cliente envía su propio punch_time (ISO string)
+        punch_time = data.get('punch_time') 
 
         # ── Inserción en DB ──
+        # Usamos COALESCE(..., NOW()) para que si punch_time es NULL use la hora del servidor
         row = execute(
             """
-            INSERT INTO raw_punches (employee_id, device_id, punch_type, confidence_score, client_uuid)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO raw_punches (employee_id, device_id, punch_time, punch_type, confidence_score, offline_sync, client_uuid)
+            VALUES (%s, %s, COALESCE(%s, NOW()), %s, %s, %s, %s)
             ON CONFLICT (client_uuid) DO UPDATE SET created_at = EXCLUDED.created_at -- Idempotencia
             RETURNING id, punch_type, punch_time
             """,
-            (device['employee_id'], device['device_id'], punch_type, confidence, client_uuid)
+            (device['employee_id'], device['device_id'], punch_time, punch_type, confidence, offline_sync, client_uuid)
         )
 
         return jsonify({
