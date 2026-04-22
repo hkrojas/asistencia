@@ -12,7 +12,7 @@ import {
   Building2,
   UserX,
 } from 'lucide-react';
-import { getAdminStats, getAdminAttendance, downloadAttendanceReport } from '../services/api';
+import { getAdminStats, getAdminAttendance, downloadAttendanceReport, processTimesheets } from '../services/api';
 import ExceptionsManager from '../components/ExceptionsManager';
 import './Dashboard.css';
 
@@ -25,6 +25,7 @@ export default function Dashboard() {
     avg_punctuality: 0,
   });
   const [loading, setLoading] = useState(true);
+  const [processing, setProcessing] = useState(false);
   const [error, setError] = useState(null);
 
   const fetchData = async () => {
@@ -51,6 +52,22 @@ export default function Dashboard() {
     } catch (err) {
       console.error('Error exporting CSV:', err);
       alert('Error al exportar el reporte');
+    }
+  };
+
+  const handleProcessTimesheets = async () => {
+    if (!window.confirm('¿Deseas procesar todas las jornadas de los últimos 7 días? Este proceso consolidará las horas extra y tardanzas.')) return;
+
+    try {
+      setProcessing(true);
+      await processTimesheets({});
+      alert('Cierre de planilla completado con éxito. Iniciando descarga de reporte consolidado...');
+      await handleExport();
+    } catch (err) {
+      console.error('Error processing timesheets:', err);
+      alert('Error al procesar el cierre de planilla');
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -100,10 +117,18 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="header-actions">
-          {loading && <RotateCw className="animate-spin text-gold" size={20} />}
+          {(loading || processing) && <RotateCw className="animate-spin text-gold" size={20} />}
+          <button 
+            className="btn-process-wfm" 
+            onClick={handleProcessTimesheets}
+            disabled={processing}
+          >
+            <Clock size={18} />
+            {processing ? 'Procesando...' : 'Cierre de Planilla'}
+          </button>
           <button className="btn-export" onClick={handleExport}>
             <Download size={18} />
-            Exportar a CSV
+            Exportar CSV
           </button>
         </div>
       </header>

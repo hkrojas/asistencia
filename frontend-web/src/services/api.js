@@ -35,4 +35,6 @@ export const getRoles = () => api.get('/admin/roles');
 export const getEmployeeSchedule = (id) => api.get(`/admin/employees/${id}/schedule`);
 export const updateEmployeeSchedule = (id, data) => api.post(`/admin/employees/${id}/schedule`, data);
 
+export const processTimesheets = (data) => api.post('/admin/timesheets/process', data);
+
 export default api;

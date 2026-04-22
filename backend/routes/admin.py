@@ -1,7 +1,9 @@
-from flask import Blueprint, jsonify, Response
+from flask import Blueprint, jsonify, Response, request
 import csv
 import io
+from datetime import datetime, timedelta, date
 from utils.db import query_one, query_all
+from services.timesheet_engine import process_timesheet
 
 admin_bp = Blueprint('admin', __name__)
 
@@ -168,31 +170,32 @@ def admin_login():
 
 @admin_bp.route('/admin/export/csv', methods=['GET'])
 def export_attendance_csv():
-    """Genera y descarga un reporte CSV de asistencia con excepciones."""
+    """Genera y descarga un reporte CSV basado en jornadas procesadas."""
     try:
         rows = query_all("""
             SELECT 
                 e.full_name,
                 b.name AS building,
-                rp.punch_time::date AS date,
-                MIN(rp.punch_time) FILTER (WHERE rp.punch_type = 'in') AS first_in,
-                MAX(rp.punch_time) FILTER (WHERE rp.punch_type = 'out') AS last_out,
-                te.exception_type AS resolution,
-                te.minutes_adjusted AS extra_minutes,
-                AVG(rp.confidence_score) AS bio_avg
-            FROM raw_punches rp
-            JOIN employees e ON e.id = rp.employee_id
+                dt.logical_date AS date,
+                dt.first_punch_in AS first_in,
+                dt.last_punch_out AS last_out,
+                dt.status,
+                dt.regular_minutes,
+                dt.overtime_minutes,
+                dt.deficit_minutes,
+                (SELECT AVG(confidence_score) FROM raw_punches 
+                 WHERE employee_id = e.id AND punch_time::date = dt.logical_date) AS bio_avg
+            FROM daily_timesheets dt
+            JOIN employees e ON e.id = dt.employee_id
             LEFT JOIN buildings b ON b.id = e.primary_building_id
-            LEFT JOIN time_exceptions te ON te.employee_id = e.id AND te.date = rp.punch_time::date
-            GROUP BY e.full_name, b.name, rp.punch_time::date, te.exception_type, te.minutes_adjusted
-            ORDER BY rp.punch_time::date DESC
+            ORDER BY dt.logical_date DESC, e.full_name ASC
         """)
 
         output = io.StringIO()
         writer = csv.writer(output)
         
         # Header
-        writer.writerow(['Empleado', 'Sede', 'Fecha', 'Entrada', 'Salida', 'Resolución WFM', 'Minutos Extra', 'Biometría (Avg)'])
+        writer.writerow(['Empleado', 'Sede', 'Fecha', 'Entrada', 'Salida', 'Estado', 'Horas Reg.', 'Horas Extra', 'Déficit (Min)', 'Biometría (Avg)'])
         
         for r in rows:
             writer.writerow([
@@ -201,8 +204,10 @@ def export_attendance_csv():
                 r['date'].isoformat(),
                 r['first_in'].strftime('%H:%M') if r['first_in'] else '--:--',
                 r['last_out'].strftime('%H:%M') if r['last_out'] else '--:--',
-                r['resolution'] or 'Normal',
-                r['extra_minutes'] or 0,
+                r['status'].capitalize(),
+                f"{r['regular_minutes']/60:.1f}h",
+                f"{r['overtime_minutes']/60:.1f}h",
+                r['deficit_minutes'],
                 f"{r['bio_avg']:.1f}%" if r['bio_avg'] else "N/A"
             ])
             
@@ -210,7 +215,7 @@ def export_attendance_csv():
         return Response(
             output.getvalue(),
             mimetype="text/csv",
-            headers={"Content-Disposition": "attachment; filename=reporte_asistencia.csv"}
+            headers={"Content-Disposition": "attachment; filename=reporte_asistencia_final.csv"}
         )
         
     except Exception as e:
@@ -359,3 +364,39 @@ def manage_employee_schedule(employee_id):
         except Exception as e:
             print(f'[admin] Error en POST schedule: {e}')
             return jsonify({'error': 'Error al actualizar horario'}), 500
+
+@admin_bp.route('/admin/timesheets/process', methods=['POST'])
+def process_all_timesheets():
+    """
+    Procesa las jornadas para todos los empleados activos en un rango de fechas.
+    """
+    try:
+        data = request.json or {}
+        # Default: últimos 7 días
+        end_date = date.today()
+        start_date = end_date - timedelta(days=7)
+        
+        if 'start_date' in data:
+            start_date = datetime.strptime(data['start_date'], '%Y-%m-%d').date()
+        if 'end_date' in data:
+            end_date = datetime.strptime(data['end_date'], '%Y-%m-%d').date()
+            
+        # Obtener empleados activos
+        active_employees = query_all("SELECT id FROM employees WHERE status = 'active'")
+        
+        count = 0
+        current_date = start_date
+        while current_date <= end_date:
+            for emp in active_employees:
+                if process_timesheet(emp['id'], current_date):
+                    count += 1
+            current_date += timedelta(days=1)
+            
+        return jsonify({
+            'message': 'Procesamiento completado',
+            'days_processed': (end_date - start_date).days + 1,
+            'records_updated': count
+        }), 200
+    except Exception as e:
+        print(f'[admin] Error en process_all_timesheets: {e}')
+        return jsonify({'error': str(e)}), 500
