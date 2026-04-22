@@ -36,5 +36,6 @@ export const getEmployeeSchedule = (id) => api.get(`/admin/employees/${id}/sched
 export const updateEmployeeSchedule = (id, data) => api.post(`/admin/employees/${id}/schedule`, data);
 
 export const processTimesheets = (data) => api.post('/admin/timesheets/process', data);
+export const createLeave = (data) => api.post('/admin/leaves', data);
 
 export default api;

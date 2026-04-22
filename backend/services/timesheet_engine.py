@@ -24,6 +24,12 @@ def process_timesheet(employee_id, logical_date):
             # Si no hay horario, no procesamos timesheet (día libre)
             return None
 
+        # 2.5 Verificar si hay un permiso (leave) registrado para este día
+        leave = query_one("""
+            SELECT leave_type, is_paid FROM leaves 
+            WHERE employee_id = %s AND logical_date = %s
+        """, (employee_id, logical_date))
+
         # 3. Definir ventana de búsqueda de marcaciones
         # Buscamos desde el inicio del día lógico hasta 36h después si es overnight, 24h sino.
         start_search = datetime.combine(logical_date, datetime.min.time())
@@ -36,8 +42,22 @@ def process_timesheet(employee_id, logical_date):
             ORDER BY punch_time ASC
         """, (employee_id, start_search, end_search))
         
-        # 4. Caso: No hay marcaciones (Falta)
+        # 4. Caso: No hay marcaciones
         if not punches:
+            # Si hay permiso, el status es 'leave' y deficit es 0
+            if leave:
+                query_one("""
+                    INSERT INTO daily_timesheets (employee_id, logical_date, schedule_id, deficit_minutes, status)
+                    VALUES (%s, %s, %s, 0, 'resolved')
+                    ON CONFLICT (employee_id, logical_date) DO UPDATE SET
+                        schedule_id = EXCLUDED.schedule_id,
+                        deficit_minutes = 0,
+                        status = 'resolved',
+                        updated_at = NOW()
+                    RETURNING id
+                """, (employee_id, logical_date, schedule['id']))
+                return True
+
             expected_start = datetime.combine(logical_date, schedule['start_time'])
             expected_end = datetime.combine(logical_date, schedule['end_time'])
             if schedule['is_overnight'] and expected_end <= expected_start:
@@ -101,9 +121,14 @@ def process_timesheet(employee_id, logical_date):
         total_expected = int((expected_end - expected_start).total_seconds() / 60)
         deficit_mins = max(0, total_expected - regular_mins)
         
-        # Status final
-        # Si hay déficit o demasia horas extra, es exception
-        status = 'perfect' if deficit_mins == 0 and overtime_mins == 0 else 'exception'
+        # Si hay permiso, perdonamos el déficit
+        if leave:
+            deficit_mins = 0
+            status = 'resolved'
+        else:
+            # Status final
+            # Si hay déficit o demasia horas extra, es exception
+            status = 'perfect' if deficit_mins == 0 and overtime_mins == 0 else 'exception'
         
         # 7. Guardar resultados (UPSERT)
         query_one("""

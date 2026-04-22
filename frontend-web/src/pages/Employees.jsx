@@ -8,10 +8,15 @@ import {
   Briefcase,
   Building,
   ShieldAlert,
-  CalendarClock
+  CalendarClock,
+  UserPlus,
+  Building2,
+  DollarSign,
+  Heart
 } from 'lucide-react';
 import { getEmployees, createEmployee, getBuildings, getRoles } from '../services/api';
 import ScheduleModal from './ScheduleModal';
+import LeaveModal from './LeaveModal';
 import './Employees.css';
 
 const Employees = () => {
@@ -21,12 +26,14 @@ const Employees = () => {
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [formData, setFormData] = useState({ 
     full_name: '', 
     job_title: '', 
     primary_building_id: '',
-    role_id: ''
+    role_id: '',
+    hourly_wage: 0
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
@@ -47,7 +54,6 @@ const Employees = () => {
       setBuildings(buildRes.data);
       setRoles(roleRes.data);
       
-      // Establecer rol por defecto para el formulario
       if (roleRes.data.length > 0) {
         const workerRole = roleRes.data.find(r => r.name.toLowerCase() === 'worker');
         setFormData(prev => ({...prev, role_id: workerRole ? workerRole.id : roleRes.data[0].id}));
@@ -71,7 +77,8 @@ const Employees = () => {
         full_name: '', 
         job_title: '', 
         primary_building_id: buildings[0]?.id || '',
-        role_id: roles.find(r => r.name.toLowerCase() === 'worker')?.id || roles[0]?.id || ''
+        role_id: roles.find(r => r.name.toLowerCase() === 'worker')?.id || roles[0]?.id || '',
+        hourly_wage: 0
       });
       fetchData();
     } catch (error) {
@@ -79,11 +86,6 @@ const Employees = () => {
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  const openSchedule = (employee) => {
-    setSelectedEmployee(employee);
-    setShowScheduleModal(true);
   };
 
   const filteredEmployees = employees.filter(e => 
@@ -162,11 +164,24 @@ const Employees = () => {
                     <td>
                       <div className="action-buttons">
                         <button 
-                          className="action-icon-btn" 
-                          title="Asignar Horario"
-                          onClick={() => openSchedule(employee)}
+                          className="action-btn schedule" 
+                          title="Horarios"
+                          onClick={() => {
+                            setSelectedEmployee(employee);
+                            setShowScheduleModal(true);
+                          }}
                         >
-                          <CalendarClock size={20} />
+                          <CalendarClock size={16} />
+                        </button>
+                        <button 
+                          className="action-btn leave" 
+                          title="Registrar Permiso"
+                          onClick={() => {
+                            setSelectedEmployee(employee);
+                            setShowLeaveModal(true);
+                          }}
+                        >
+                          <Heart size={16} />
                         </button>
                         <button className="text-btn">Expediente</button>
                       </div>
@@ -215,17 +230,34 @@ const Employees = () => {
                 />
               </div>
               <div className="form-group">
-                <label>Sede Principal</label>
-                <select 
-                  value={formData.primary_building_id}
-                  onChange={(e) => setFormData({...formData, primary_building_id: e.target.value})}
-                  required
-                >
-                  <option value="">Seleccionar Sede</option>
-                  {buildings.map(b => (
-                    <option key={b.id} value={b.id}>{b.name}</option>
-                  ))}
-                </select>
+                <label>Sede Primaria</label>
+                <div className="input-with-icon">
+                  <Building2 size={18} />
+                  <select 
+                    required 
+                    value={formData.primary_building_id}
+                    onChange={(e) => setFormData({...formData, primary_building_id: e.target.value})}
+                  >
+                    <option value="">Seleccionar Sede</option>
+                    {buildings.map(b => (
+                      <option key={b.id} value={b.id}>{b.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div className="form-group">
+                <label>Tarifa por Hora (S/)</label>
+                <div className="input-with-icon">
+                  <DollarSign size={18} />
+                  <input 
+                    type="number" 
+                    step="0.10"
+                    min="0"
+                    placeholder="Ej. 15.50"
+                    value={formData.hourly_wage}
+                    onChange={(e) => setFormData({...formData, hourly_wage: e.target.value})}
+                  />
+                </div>
               </div>
               <div className="form-group">
                 <label>Rol de Sistema</label>
@@ -252,11 +284,19 @@ const Employees = () => {
         </div>
       )}
 
-      <ScheduleModal 
-        isOpen={showScheduleModal} 
-        onClose={() => setShowScheduleModal(false)} 
-        employee={selectedEmployee} 
-      />
+      {showScheduleModal && selectedEmployee && (
+        <ScheduleModal 
+          employee={selectedEmployee} 
+          onClose={() => setShowScheduleModal(false)} 
+        />
+      )}
+
+      {showLeaveModal && selectedEmployee && (
+        <LeaveModal 
+          employee={selectedEmployee} 
+          onClose={() => setShowLeaveModal(false)} 
+        />
+      )}
     </div>
   );
 };

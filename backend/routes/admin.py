@@ -175,6 +175,7 @@ def export_attendance_csv():
         rows = query_all("""
             SELECT 
                 e.full_name,
+                e.hourly_wage,
                 b.name AS building,
                 dt.logical_date AS date,
                 dt.first_punch_in AS first_in,
@@ -195,9 +196,13 @@ def export_attendance_csv():
         writer = csv.writer(output)
         
         # Header
-        writer.writerow(['Empleado', 'Sede', 'Fecha', 'Entrada', 'Salida', 'Estado', 'Horas Reg.', 'Horas Extra', 'Déficit (Min)', 'Biometría (Avg)'])
+        writer.writerow(['Empleado', 'Sede', 'Fecha', 'Entrada', 'Salida', 'Estado', 'Horas Reg.', 'Horas Extra', 'Déficit (Min)', 'Biometría (Avg)', 'Tarifa Hora', 'Pago Reg.', 'Pago Extra', 'Total'])
         
         for r in rows:
+            wage = float(r['hourly_wage'] or 0)
+            reg_pay = (r['regular_minutes'] / 60.0) * wage
+            ext_pay = (r['overtime_minutes'] / 60.0) * wage * 1.5
+            
             writer.writerow([
                 r['full_name'],
                 r['building'] or 'N/A',
@@ -208,7 +213,11 @@ def export_attendance_csv():
                 f"{r['regular_minutes']/60:.1f}h",
                 f"{r['overtime_minutes']/60:.1f}h",
                 r['deficit_minutes'],
-                f"{r['bio_avg']:.1f}%" if r['bio_avg'] else "N/A"
+                f"{r['bio_avg']:.1f}%" if r['bio_avg'] else "N/A",
+                f"S/ {wage:.2f}",
+                f"S/ {reg_pay:.2f}",
+                f"S/ {ext_pay:.2f}",
+                f"S/ {(reg_pay + ext_pay):.2f}"
             ])
             
         output.seek(0)
@@ -257,7 +266,7 @@ def manage_employees():
         try:
             employees = query_all("""
                 SELECT 
-                    e.id, e.full_name, e.job_title, e.status,
+                    e.id, e.full_name, e.job_title, e.status, e.hourly_wage,
                     b.name as building_name,
                     r.name as role_name
                 FROM employees e
@@ -279,15 +288,16 @@ def manage_employees():
             full_name = data.get('full_name')
             job_title = data.get('job_title')
             building_id = data.get('primary_building_id')
-            role_id = data.get('role_id', '00000000-0000-0000-0000-000000000001') # Default Worker
+            role_id = data.get('role_id', '00000000-0000-0000-0000-000000000001')
+            hourly_wage = data.get('hourly_wage', 0)
             
             if not full_name:
                 return jsonify({'error': 'El nombre es obligatorio'}), 400
                 
             new_id = query_one("""
-                INSERT INTO employees (full_name, job_title, primary_building_id, role_id)
-                VALUES (%s, %s, %s, %s) RETURNING id
-            """, (full_name, job_title, building_id, role_id))
+                INSERT INTO employees (full_name, job_title, primary_building_id, role_id, hourly_wage)
+                VALUES (%s, %s, %s, %s, %s) RETURNING id
+            """, (full_name, job_title, building_id, role_id, hourly_wage))
             return jsonify({'message': 'Empleado creado', 'id': str(new_id['id'])}), 201
         except Exception as e:
             print(f'[admin] Error en manage_employees POST: {e}')
@@ -364,6 +374,37 @@ def manage_employee_schedule(employee_id):
         except Exception as e:
             print(f'[admin] Error en POST schedule: {e}')
             return jsonify({'error': 'Error al actualizar horario'}), 500
+
+@admin_bp.route('/admin/leaves', methods=['POST'])
+def create_leave():
+    """Registra una ausencia justificada para un empleado."""
+    try:
+        data = request.json
+        employee_id = data.get('employee_id')
+        logical_date = data.get('logical_date')
+        leave_type = data.get('leave_type')
+        is_paid = data.get('is_paid', True)
+
+        if not employee_id or not logical_date or not leave_type:
+            return jsonify({'error': 'Faltan datos obligatorios'}), 400
+
+        query_one("""
+            INSERT INTO leaves (employee_id, logical_date, leave_type, is_paid)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (employee_id, logical_date) DO UPDATE SET
+                leave_type = EXCLUDED.leave_type,
+                is_paid = EXCLUDED.is_paid
+            RETURNING id
+        """, (employee_id, logical_date, leave_type, is_paid))
+        
+        # Al registrar un permiso, forzamos el reprocesamiento del timesheet para ese día
+        from services.timesheet_engine import process_timesheet
+        process_timesheet(employee_id, logical_date)
+        
+        return jsonify({'message': 'Permiso registrado correctamente'}), 201
+    except Exception as e:
+        print(f'[admin] Error en POST leaves: {e}')
+        return jsonify({'error': 'Error al registrar permiso'}), 500
 
 @admin_bp.route('/admin/timesheets/process', methods=['POST'])
 def process_all_timesheets():
