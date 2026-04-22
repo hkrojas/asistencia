@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from utils.db import query_one, execute
+from utils.db import query_one, query_all, execute
 from services.biometrics import verify_face
 
 attendance_bp = Blueprint('attendance', __name__)
@@ -123,7 +123,68 @@ def register_attendance():
                 'confidence_score': confidence,
             }
         }), 201
-
     except Exception as e:
         print(f'[attendance] Error en register: {e}')
         return jsonify({'success': False, 'error': 'Error interno del servidor'}), 500
+
+
+@attendance_bp.route('/attendance/summary', methods=['GET'])
+def get_employee_summary():
+    """Retorna un resumen de las últimas 7 jornadas para el empleado vinculado."""
+    token = request.headers.get('X-Device-Token')
+    if not token:
+        return jsonify({'error': 'X-Device-Token header es requerido'}), 401
+
+    try:
+        device = _get_employee_from_token(token)
+        if not device:
+            return jsonify({'error': 'Dispositivo no válido'}), 401
+
+        employee_id = device['employee_id']
+
+        # Obtener las últimas 7 jornadas procesadas
+        timesheets = query_all(
+            """
+            SELECT logical_date, status, regular_minutes, overtime_minutes, deficit_minutes
+              FROM daily_timesheets
+             WHERE employee_id = %s
+             ORDER BY logical_date DESC
+             LIMIT 7
+            """,
+            (employee_id,)
+        )
+
+        total_reg_min = sum(ts['regular_minutes'] or 0 for ts in timesheets)
+        total_ovt_min = sum(ts['overtime_minutes'] or 0 for ts in timesheets)
+
+        days_detail = []
+        for ts in timesheets:
+            total_worked_min = (ts['regular_minutes'] or 0) + (ts['overtime_minutes'] or 0)
+            hours = total_worked_min / 60.0
+            
+            # Formatear el status para el usuario final
+            user_status = ts['status']
+            if ts['status'] == 'perfect': user_status = 'Completo'
+            elif ts['status'] == 'overtime': user_status = 'Horas Extra'
+            elif ts['status'] == 'deficit': user_status = 'Incompleto'
+            elif ts['status'] == 'absent': user_status = 'Falta'
+            elif ts['status'] == 'resolved': user_status = 'Justificado'
+
+            days_detail.append({
+                'date': ts['logical_date'].isoformat(),
+                'status': user_status,
+                'worked_hours': round(hours, 2),
+                'overtime_minutes': ts['overtime_minutes'] or 0,
+                'deficit_minutes': ts['deficit_minutes'] or 0
+            })
+
+        return jsonify({
+            'success': True,
+            'total_regular_hours': round(total_reg_min / 60.0, 2),
+            'total_overtime_hours': round(total_ovt_min / 60.0, 2),
+            'days': days_detail
+        }), 200
+
+    except Exception as e:
+        print(f'[attendance] Error en get_summary: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500

@@ -178,3 +178,15 @@ export async function fetchWeeklySchedule(deviceToken) {
     return { employee: '', schedule: [], error: 'Offline' };
   }
 }
+/**
+ * Obtiene el resumen semanal del empleado (transparencia).
+ */
+export async function getEmployeeSummary(deviceToken) {
+  try {
+    return await request('/attendance/summary', {
+      headers: { 'X-Device-Token': deviceToken },
+    });
+  } catch (error) {
+    throw error;
+  }
+}

@@ -16,6 +16,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../theme';
 import { getDeviceToken, saveDeviceToken } from '../utils/storage';
 import { checkDeviceToken, fetchCurrentState, sendAttendance, syncOfflinePunches, getPendingSyncCount } from '../services/api';
+import MyTimesheetScreen from './MyTimesheetScreen';
 
 export default function AttendanceScreen() {
   const cameraRef = useRef(null);
@@ -31,6 +32,7 @@ export default function AttendanceScreen() {
   // ── Estado del modal de administrador ──
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [adminPin, setAdminPin] = useState('');
+  const [showSummary, setShowSummary] = useState(false);
 
   useEffect(() => {
     initializeDevice();
@@ -294,6 +296,16 @@ export default function AttendanceScreen() {
             </Text>
           </View>
         )}
+
+        {linked && (
+          <TouchableOpacity 
+            style={styles.summaryButton} 
+            onPress={() => setShowSummary(true)}
+          >
+            <Ionicons name="stats-chart" size={16} color={Colors.textLight} />
+            <Text style={styles.summaryButtonText}>Ver Mi Semana</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Guía visual: marco facial */}
@@ -319,6 +331,15 @@ export default function AttendanceScreen() {
           )}
         </TouchableOpacity>
       </View>
+
+      {/* ── Modal de Resumen Semanal ── */}
+      <Modal
+        visible={showSummary}
+        animationType="slide"
+        onRequestClose={() => setShowSummary(false)}
+      >
+        <MyTimesheetScreen onClose={() => setShowSummary(false)} />
+      </Modal>
     </View>
   );
 }
@@ -381,6 +402,23 @@ const styles = StyleSheet.create({
     color: Colors.warning || '#FF9800',
     fontWeight: '600',
     marginLeft: 6,
+  },
+  summaryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+  },
+  summaryButtonText: {
+    color: Colors.textLight,
+    fontSize: 14,
+    fontWeight: '700',
+    marginLeft: 8,
   },
 
   // ── Guía facial ──
