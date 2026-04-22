@@ -32,4 +32,7 @@ export const getBuildings = () => api.get('/admin/buildings');
 export const createBuilding = (data) => api.post('/admin/buildings', data);
 export const getRoles = () => api.get('/admin/roles');
 
+export const getEmployeeSchedule = (id) => api.get(`/admin/employees/${id}/schedule`);
+export const updateEmployeeSchedule = (id, data) => api.post(`/admin/employees/${id}/schedule`, data);
+
 export default api;

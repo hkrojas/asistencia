@@ -297,3 +297,65 @@ def get_roles():
         return jsonify(roles), 200
     except Exception as e:
         return jsonify({'error': 'Error al obtener roles'}), 500
+
+@admin_bp.route('/admin/employees/<uuid:employee_id>/schedule', methods=['GET', 'POST'])
+def manage_employee_schedule(employee_id):
+    from flask import request
+    if request.method == 'GET':
+        try:
+            schedules = query_all("""
+                SELECT 
+                    day_of_week, start_time, end_time, 
+                    building_id, is_overnight, tolerance_minutes
+                FROM schedules 
+                WHERE employee_id = %s
+                ORDER BY day_of_week ASC
+            """, (employee_id,))
+            
+            for s in schedules:
+                if s['start_time']: s['start_time'] = s['start_time'].strftime('%H:%M')
+                if s['end_time']: s['end_time'] = s['end_time'].strftime('%H:%M')
+                s['building_id'] = str(s['building_id']) if s['building_id'] else None
+                
+            return jsonify(schedules), 200
+        except Exception as e:
+            print(f'[admin] Error en GET schedule: {e}')
+            return jsonify({'error': 'Error al obtener horario'}), 500
+
+    if request.method == 'POST':
+        data = request.json # Arreglo de objetos por día
+        if not isinstance(data, list):
+            return jsonify({'error': 'Se esperaba un arreglo de horarios'}), 400
+            
+        try:
+            for day in data:
+                day_num = day.get('day_of_week')
+                start = day.get('start_time')
+                end = day.get('end_time')
+                build_id = day.get('building_id')
+                overnight = day.get('is_overnight', False)
+                tol = day.get('tolerance_minutes', 15)
+                active = day.get('active', True)
+                
+                if not active:
+                    # Si no es día laboral, eliminar si existe
+                    query_one("DELETE FROM schedules WHERE employee_id = %s AND day_of_week = %s RETURNING id", (employee_id, day_num))
+                    continue
+
+                query_one("""
+                    INSERT INTO schedules (employee_id, day_of_week, start_time, end_time, building_id, is_overnight, tolerance_minutes)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (employee_id, day_of_week) 
+                    DO UPDATE SET 
+                        start_time = EXCLUDED.start_time,
+                        end_time = EXCLUDED.end_time,
+                        building_id = EXCLUDED.building_id,
+                        is_overnight = EXCLUDED.is_overnight,
+                        tolerance_minutes = EXCLUDED.tolerance_minutes
+                    RETURNING id
+                """, (employee_id, day_num, start, end, build_id, overnight, tol))
+                
+            return jsonify({'message': 'Horario actualizado correctamente'}), 200
+        except Exception as e:
+            print(f'[admin] Error en POST schedule: {e}')
+            return jsonify({'error': 'Error al actualizar horario'}), 500

@@ -7,9 +7,11 @@ import {
   User,
   Briefcase,
   Building,
-  ShieldAlert
+  ShieldAlert,
+  CalendarClock
 } from 'lucide-react';
 import { getEmployees, createEmployee, getBuildings, getRoles } from '../services/api';
+import ScheduleModal from './ScheduleModal';
 import './Employees.css';
 
 const Employees = () => {
@@ -18,6 +20,8 @@ const Employees = () => {
   const [roles, setRoles] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [selectedEmployee, setSelectedEmployee] = useState(null);
   const [formData, setFormData] = useState({ 
     full_name: '', 
     job_title: '', 
@@ -75,6 +79,11 @@ const Employees = () => {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const openSchedule = (employee) => {
+    setSelectedEmployee(employee);
+    setShowScheduleModal(true);
   };
 
   const filteredEmployees = employees.filter(e => 
@@ -151,7 +160,16 @@ const Employees = () => {
                       </span>
                     </td>
                     <td>
-                      <button className="text-btn">Expediente</button>
+                      <div className="action-buttons">
+                        <button 
+                          className="action-icon-btn" 
+                          title="Asignar Horario"
+                          onClick={() => openSchedule(employee)}
+                        >
+                          <CalendarClock size={20} />
+                        </button>
+                        <button className="text-btn">Expediente</button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -233,6 +251,12 @@ const Employees = () => {
           </div>
         </div>
       )}
+
+      <ScheduleModal 
+        isOpen={showScheduleModal} 
+        onClose={() => setShowScheduleModal(false)} 
+        employee={selectedEmployee} 
+      />
     </div>
   );
 };

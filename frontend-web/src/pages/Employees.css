@@ -72,3 +72,31 @@
   color: #6c757d;
   font-size: 18px;
 }
+
+.action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.action-icon-btn {
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  color: #001a33;
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.action-icon-btn:hover {
+  background: #D4AF37;
+  color: #001a33;
+  border-color: #D4AF37;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(212, 175, 55, 0.2);
+}
