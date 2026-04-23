@@ -211,25 +211,26 @@ def admin_login():
 def export_attendance_csv():
     """Genera y descarga un reporte CSV basado en jornadas procesadas."""
     try:
-        rows = query_all("""
+        period_id = request.args.get('period_id')
+        query = """
             SELECT 
-                e.full_name,
-                e.hourly_wage,
-                b.name AS building,
-                dt.logical_date AS date,
-                dt.first_punch_in AS first_in,
-                dt.last_punch_out AS last_out,
-                dt.status,
-                dt.regular_minutes,
-                dt.overtime_minutes,
-                dt.deficit_minutes,
+                e.full_name, e.hourly_wage, b.name AS building,
+                dt.logical_date AS date, dt.first_punch_in AS first_in,
+                dt.last_punch_out AS last_out, dt.status,
+                dt.regular_minutes, dt.overtime_minutes, dt.deficit_minutes,
                 (SELECT AVG(confidence_score) FROM raw_punches 
                  WHERE employee_id = e.id AND punch_time::date = dt.logical_date) AS bio_avg
             FROM daily_timesheets dt
             JOIN employees e ON e.id = dt.employee_id
             LEFT JOIN buildings b ON b.id = e.primary_building_id
-            ORDER BY dt.logical_date DESC, e.full_name ASC
-        """)
+        """
+        params = []
+        if period_id:
+            query += " WHERE dt.payroll_period_id = %s "
+            params.append(period_id)
+            
+        query += " ORDER BY dt.logical_date DESC, e.full_name ASC"
+        rows = query_all(query, params)
 
         output = io.StringIO()
         writer = csv.writer(output)
@@ -517,3 +518,60 @@ def generate_pairing_code():
     except Exception as e:
         print(f'[admin] Error al generar pairing code: {e}')
         return jsonify({'error': 'Error interno al generar código'}), 500
+
+@admin_bp.route('/admin/payroll-periods', methods=['GET', 'POST'])
+@require_auth
+def manage_payroll_periods():
+    if request.method == 'GET':
+        try:
+            periods = query_all("SELECT * FROM payroll_periods ORDER BY starts_on DESC")
+            for p in periods:
+                p['id'] = str(p['id'])
+                p['starts_on'] = p['starts_on'].isoformat()
+                p['ends_on'] = p['ends_on'].isoformat()
+                if p['closed_at']: p['closed_at'] = p['closed_at'].isoformat()
+            return jsonify(periods), 200
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+    if request.method == 'POST':
+        data = request.json
+        try:
+            name = data.get('name')
+            start = data.get('starts_on')
+            end = data.get('ends_on')
+            
+            with tx() as (conn, cur):
+                cur.execute("""
+                    INSERT INTO payroll_periods (name, starts_on, ends_on)
+                    VALUES (%s, %s, %s) RETURNING id
+                """, (name, start, end))
+                row = cur.fetchone()
+            return jsonify({'id': str(row['id'])}), 201
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
+@admin_bp.route('/admin/payroll-periods/<uuid:period_id>/close', methods=['POST'])
+@require_auth
+def close_payroll_period(period_id):
+    """Cierra el periodo y bloquea todos los timesheets asociados."""
+    try:
+        # 1. Marcar el periodo como cerrado
+        with tx() as (conn, cur):
+            cur.execute("""
+                UPDATE payroll_periods 
+                SET state = 'closed', closed_at = NOW()
+                WHERE id = %s
+            """, (period_id,))
+            
+            # 2. Bloqueo masivo en daily_timesheets
+            cur.execute("""
+                UPDATE daily_timesheets 
+                SET is_locked = TRUE 
+                WHERE payroll_period_id = %s
+            """, (period_id,))
+            
+        return jsonify({'message': 'Periodo cerrado y bloqueado con exito'}), 200
+    except Exception as e:
+        print(f'[admin] Error al cerrar periodo: {e}')
+        return jsonify({'error': str(e)}), 500

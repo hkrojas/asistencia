@@ -10,9 +10,28 @@ def process_timesheet(employee_id, logical_date):
         if isinstance(logical_date, str):
             logical_date = datetime.strptime(logical_date, '%Y-%m-%d').date()
 
-        # 1. Determinar el día de la semana (0=Lunes, 6=Domingo)
-        day_of_week = logical_date.weekday() # Monday is 0, Sunday is 6
-        
+        # 1.2 Verificar Periodo de Nomina y Bloqueo
+        period = query_one("""
+            SELECT id, state FROM payroll_periods 
+            WHERE %s BETWEEN starts_on AND ends_on
+        """, (logical_date,))
+
+        # Si el periodo existe y esta CERRADO, abortamos y marcamos marcaciones como tardias
+        if period and period['state'] == 'closed':
+            print(f"[timesheet_engine] Periodo CERRADO para {logical_date}. Bloqueando edicion.")
+            with tx() as (conn, cur):
+                cur.execute("""
+                    UPDATE raw_punches 
+                    SET ingest_status = 'late_pending_review'
+                    WHERE employee_id = %s 
+                    AND punch_time::date = %s
+                    AND ingest_status = 'accepted'
+                """, (employee_id, logical_date))
+            return False # Abortamos recalculo
+
+        # 1.3 Determinar el dia de la semana (0=Lunes, 6=Domingo)
+        day_of_week = logical_date.weekday()
+
         # 2. Obtener el horario configurado
         schedule = query_one("""
             SELECT id, start_time, end_time, is_overnight, tolerance_minutes
@@ -48,14 +67,15 @@ def process_timesheet(employee_id, logical_date):
             if leave:
                 with tx() as (conn, cur):
                     cur.execute("""
-                        INSERT INTO daily_timesheets (employee_id, logical_date, schedule_id, deficit_minutes, status)
-                        VALUES (%s, %s, %s, 0, 'resolved')
+                        INSERT INTO daily_timesheets (employee_id, logical_date, schedule_id, deficit_minutes, status, payroll_period_id)
+                        VALUES (%s, %s, %s, 0, 'resolved', %s)
                         ON CONFLICT (employee_id, logical_date) DO UPDATE SET
                             schedule_id = EXCLUDED.schedule_id,
                             deficit_minutes = 0,
                             status = 'resolved',
+                            payroll_period_id = EXCLUDED.payroll_period_id,
                             updated_at = NOW()
-                    """, (employee_id, logical_date, schedule['id']))
+                    """, (employee_id, logical_date, schedule['id'], period['id'] if period else None))
                 return True
 
             expected_start = datetime.combine(logical_date, schedule['start_time'])
@@ -67,14 +87,15 @@ def process_timesheet(employee_id, logical_date):
             
             with tx() as (conn, cur):
                 cur.execute("""
-                    INSERT INTO daily_timesheets (employee_id, logical_date, schedule_id, deficit_minutes, status)
-                    VALUES (%s, %s, %s, %s, 'exception')
+                    INSERT INTO daily_timesheets (employee_id, logical_date, schedule_id, deficit_minutes, status, payroll_period_id)
+                    VALUES (%s, %s, %s, %s, 'exception', %s)
                     ON CONFLICT (employee_id, logical_date) DO UPDATE SET
                         schedule_id = EXCLUDED.schedule_id,
                         deficit_minutes = EXCLUDED.deficit_minutes,
                         status = EXCLUDED.status,
+                        payroll_period_id = EXCLUDED.payroll_period_id,
                         updated_at = NOW()
-                """, (employee_id, logical_date, schedule['id'], duration))
+                """, (employee_id, logical_date, schedule['id'], duration, period['id'] if period else None))
             return True
             
         # 5. Extraer primer IN y último OUT
@@ -85,14 +106,15 @@ def process_timesheet(employee_id, logical_date):
         if not first_in or not last_out:
             with tx() as (conn, cur):
                 cur.execute("""
-                    INSERT INTO daily_timesheets (employee_id, logical_date, schedule_id, first_punch_in, last_punch_out, status)
-                    VALUES (%s, %s, %s, %s, %s, 'incomplete')
+                    INSERT INTO daily_timesheets (employee_id, logical_date, schedule_id, first_punch_in, last_punch_out, status, payroll_period_id)
+                    VALUES (%s, %s, %s, %s, %s, 'incomplete', %s)
                     ON CONFLICT (employee_id, logical_date) DO UPDATE SET
                         first_punch_in = EXCLUDED.first_punch_in,
                         last_punch_out = EXCLUDED.last_punch_out,
                         status = 'incomplete',
+                        payroll_period_id = EXCLUDED.payroll_period_id,
                         updated_at = NOW()
-                """, (employee_id, logical_date, schedule['id'], first_in, last_out))
+                """, (employee_id, logical_date, schedule['id'], first_in, last_out, period['id'] if period else None))
             return True
 
         # 6. Cálculos de Tiempos
@@ -134,9 +156,9 @@ def process_timesheet(employee_id, logical_date):
         with tx() as (conn, cur):
             cur.execute("""
                 INSERT INTO daily_timesheets 
-                    (employee_id, logical_date, schedule_id, first_punch_in, last_punch_out, regular_minutes, overtime_minutes, deficit_minutes, status)
+                    (employee_id, logical_date, schedule_id, first_punch_in, last_punch_out, regular_minutes, overtime_minutes, deficit_minutes, status, payroll_period_id)
                 VALUES 
-                    (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (employee_id, logical_date) DO UPDATE SET
                     schedule_id = EXCLUDED.schedule_id,
                     first_punch_in = EXCLUDED.first_punch_in,
@@ -145,8 +167,9 @@ def process_timesheet(employee_id, logical_date):
                     overtime_minutes = EXCLUDED.overtime_minutes,
                     deficit_minutes = EXCLUDED.deficit_minutes,
                     status = EXCLUDED.status,
+                    payroll_period_id = EXCLUDED.payroll_period_id,
                     updated_at = NOW()
-            """, (employee_id, logical_date, schedule['id'], first_in, last_out, regular_mins, overtime_mins, deficit_mins, status))
+            """, (employee_id, logical_date, schedule['id'], first_in, last_out, regular_mins, overtime_mins, deficit_mins, status, period['id'] if period else None))
         
         return True
         

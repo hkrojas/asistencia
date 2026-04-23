@@ -8,11 +8,18 @@ import {
   CheckCircle2,
   TrendingUp,
   ShieldCheck,
-  RotateCw,
-  Building2,
-  UserX,
+  Lock,
+  Unlock,
+  FileText,
 } from 'lucide-react';
-import { getAdminStats, getAdminAttendance, downloadAttendanceReport, processTimesheets } from '../services/api';
+import { 
+  getAdminStats, 
+  getAdminAttendance, 
+  downloadAttendanceReport, 
+  processTimesheets,
+  getPayrollPeriods,
+  closePayrollPeriod 
+} from '../services/api';
 import ExceptionsManager from '../components/ExceptionsManager';
 import './Dashboard.css';
 
@@ -24,6 +31,8 @@ export default function Dashboard() {
     total_buildings: 0,
     avg_punctuality: 0,
   });
+  const [periods, setPeriods] = useState([]);
+  const [selectedPeriodId, setSelectedPeriodId] = useState('');
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState(null);
@@ -31,12 +40,21 @@ export default function Dashboard() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [statsRes, attendanceRes] = await Promise.all([
+      const [statsRes, attendanceRes, periodsRes] = await Promise.all([
         getAdminStats(),
         getAdminAttendance(),
+        getPayrollPeriods(),
       ]);
       setStats(statsRes.data);
       setRecords(attendanceRes.data);
+      setPeriods(periodsRes.data);
+      
+      // Auto-seleccionar el primer periodo abierto si no hay seleccion
+      if (!selectedPeriodId && periodsRes.data.length > 0) {
+        const active = periodsRes.data.find(p => p.state === 'open') || periodsRes.data[0];
+        setSelectedPeriodId(active.id);
+      }
+      
       setError(null);
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
@@ -48,24 +66,43 @@ export default function Dashboard() {
 
   const handleExport = async () => {
     try {
-      await downloadAttendanceReport();
+      await downloadAttendanceReport(selectedPeriodId);
     } catch (err) {
       console.error('Error exporting CSV:', err);
       alert('Error al exportar el reporte');
     }
   };
 
-  const handleProcessTimesheets = async () => {
-    if (!window.confirm('¿Deseas procesar todas las jornadas de los últimos 7 días? Este proceso consolidará las horas extra y tardanzas.')) return;
+  const handleClosePeriod = async () => {
+    const period = periods.find(p => p.id === selectedPeriodId);
+    if (!period || period.state === 'closed') return;
+
+    if (!window.confirm(`¿Estás seguro de CERRAR DEFINITIVAMENTE el periodo "${period.name}"? Esto bloqueará todos los registros y no podrán ser modificados.`)) return;
 
     try {
       setProcessing(true);
-      await processTimesheets({});
-      alert('Cierre de planilla completado con éxito. Iniciando descarga de reporte consolidado...');
-      await handleExport();
+      await closePayrollPeriod(selectedPeriodId);
+      alert('Periodo cerrado y bloqueado con éxito.');
+      fetchData();
+    } catch (err) {
+      console.error('Error closing period:', err);
+      alert('Error al cerrar el periodo');
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleProcessTimesheets = async () => {
+    if (!window.confirm('¿Deseas procesar todas las jornadas? Este proceso consolidará las horas extra y tardanzas para el periodo seleccionado.')) return;
+
+    try {
+      setProcessing(true);
+      await processTimesheets({ period_id: selectedPeriodId });
+      alert('Procesamiento completado con éxito.');
+      fetchData();
     } catch (err) {
       console.error('Error processing timesheets:', err);
-      alert('Error al procesar el cierre de planilla');
+      alert('Error al procesar las jornadas');
     } finally {
       setProcessing(false);
     }
@@ -117,18 +154,39 @@ export default function Dashboard() {
           </div>
         </div>
         <div className="header-actions">
-          {(loading || processing) && <RotateCw className="animate-spin text-gold" size={20} />}
+          {(loading || processing) && <div className="spinner-small" />}
+          
+          <div className="period-selector-container">
+            <CalendarDays size={18} className="text-gold" />
+            <select 
+              value={selectedPeriodId} 
+              onChange={(e) => setSelectedPeriodId(e.target.value)}
+              className="period-select"
+            >
+              {periods.map(p => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({p.state === 'open' ? 'Abierto' : 'Cerrado'})
+                </option>
+              ))}
+              {periods.length === 0 && <option>No hay periodos creados</option>}
+            </select>
+          </div>
+
           <button 
-            className="btn-process-wfm" 
-            onClick={handleProcessTimesheets}
-            disabled={processing}
+            className={`btn-lock ${periods.find(p => p.id === selectedPeriodId)?.state === 'closed' ? 'locked' : ''}`}
+            onClick={handleClosePeriod}
+            disabled={processing || periods.find(p => p.id === selectedPeriodId)?.state === 'closed'}
           >
-            <Clock size={18} />
-            {processing ? 'Procesando...' : 'Cierre de Planilla'}
+            {periods.find(p => p.id === selectedPeriodId)?.state === 'closed' ? (
+              <><Lock size={18} /> Periodo Cerrado</>
+            ) : (
+              <><Unlock size={18} /> Cerrar Periodo</>
+            )}
           </button>
+
           <button className="btn-export" onClick={handleExport}>
-            <Download size={18} />
-            Exportar CSV
+            <FileText size={18} />
+            Descargar CSV
           </button>
         </div>
       </header>

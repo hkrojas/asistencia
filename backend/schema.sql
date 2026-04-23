@@ -189,6 +189,25 @@ VALUES
     ('c0e0e0e0-0000-0000-0000-000000000004', 'a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 3, '08:00', '17:00'),
     ('c0e0e0e0-0000-0000-0000-000000000005', 'a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 4, '08:00', '17:00');
 
+-- ──────────────────────────────────────────────────────────────
+-- 10. payroll_periods — Ciclos de Nómina y Bloqueo
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS payroll_periods (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name        VARCHAR(100) NOT NULL,
+    starts_on   DATE NOT NULL,
+    ends_on     DATE NOT NULL,
+    state       VARCHAR(20) DEFAULT 'open' CHECK (state IN ('open', 'closed')),
+    closed_at   TIMESTAMPTZ,
+    closed_by   UUID REFERENCES system_users(id),
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Actualización de tablas existentes para soportar bloqueo
+ALTER TABLE daily_timesheets ADD COLUMN IF NOT EXISTS payroll_period_id UUID REFERENCES payroll_periods(id);
+ALTER TABLE daily_timesheets ADD COLUMN IF NOT EXISTS is_locked BOOLEAN DEFAULT FALSE;
+ALTER TABLE raw_punches ADD COLUMN IF NOT EXISTS ingest_status VARCHAR(20) DEFAULT 'accepted' CHECK (ingest_status IN ('accepted', 'late_pending_review', 'rejected'));
+
 -- Phase 26: Autenticación y Usuarios de Sistema
 CREATE TABLE IF NOT EXISTS system_users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -202,3 +221,10 @@ CREATE TABLE IF NOT EXISTS system_users (
 INSERT INTO system_users (username, password_hash)
 VALUES ('admin', 'scrypt:32768:8:1$nPnHMCE4QJlQRPuD$5f3f2e7e70ac807947665f41d89e52223e1fb6cf8b650ac66be4a3d48b9d552993b1cf9917a03f29824eb09bb1c3301d7e22e3f3dab110296fa6e442d780ed6f')
 ON CONFLICT (username) DO NOTHING;
+
+-- Seed: Periodos iniciales
+INSERT INTO payroll_periods (name, starts_on, ends_on, state)
+VALUES 
+('Abril 2026 - Q1', '2026-04-01', '2026-04-15', 'closed'),
+('Abril 2026 - Q2', '2026-04-16', '2026-04-30', 'open')
+ON CONFLICT DO NOTHING;

@@ -40,12 +40,21 @@ export const resolveException = (logId, resolutionType, adminId = 'a1b2c3d4-0000
   return api.post('/admin/exceptions/resolve', { logId, resolutionType, adminId });
 };
 
-export const downloadAttendanceReport = async () => {
-  const response = await api.get('/admin/export/csv', { responseType: 'blob' });
+export const processTimesheets = (data) => api.post('/admin/timesheets/process', data);
+export const createLeave = (data) => api.post('/admin/leaves', data);
+
+// Periodos de Nómina
+export const getPayrollPeriods = () => api.get('/admin/payroll-periods');
+export const createPayrollPeriod = (data) => api.post('/admin/payroll-periods', data);
+export const closePayrollPeriod = (id) => api.post(`/admin/payroll-periods/${id}/close`);
+
+export const downloadAttendanceReport = async (periodId = null) => {
+  const urlParams = periodId ? `?period_id=${periodId}` : '';
+  const response = await api.get(`/admin/export/csv${urlParams}`, { responseType: 'blob' });
   const url = window.URL.createObjectURL(new Blob([response.data]));
   const link = document.createElement('a');
   link.href = url;
-  link.setAttribute('download', 'reporte_asistencia.csv');
+  link.setAttribute('download', `reporte_asistencia${periodId ? '_periodo' : ''}.csv`);
   document.body.appendChild(link);
   link.click();
   link.remove();
@@ -60,8 +69,5 @@ export const getRoles = () => api.get('/admin/roles');
 
 export const getEmployeeSchedule = (id) => api.get(`/admin/employees/${id}/schedule`);
 export const updateEmployeeSchedule = (id, data) => api.post(`/admin/employees/${id}/schedule`, data);
-
-export const processTimesheets = (data) => api.post('/admin/timesheets/process', data);
-export const createLeave = (data) => api.post('/admin/leaves', data);
 
 export default api;
