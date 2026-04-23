@@ -40,6 +40,9 @@ export const resolveException = (logId, resolutionType, adminId = 'a1b2c3d4-0000
   return api.post('/admin/exceptions/resolve', { logId, resolutionType, adminId });
 };
 
+export const getWfmIssues = () => api.get('/admin/wfm/issues');
+export const resolveWfmIssue = (timesheetId, data) => api.post(`/admin/wfm/resolve/${timesheetId}`, data);
+
 export const processTimesheets = (data) => api.post('/admin/timesheets/process', data);
 export const createLeave = (data) => api.post('/admin/leaves', data);
 

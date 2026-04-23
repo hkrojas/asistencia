@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
 import Employees from './pages/Employees';
 import Buildings from './pages/Buildings';
+import WfmManager from './pages/WfmManager';
 import AdminLayout from './components/AdminLayout';
 
 function App() {
@@ -51,6 +52,7 @@ function App() {
           <Route index element={<Dashboard />} />
           <Route path="employees" element={<Employees />} />
           <Route path="buildings" element={<Buildings />} />
+          <Route path="wfm" element={<WfmManager />} />
         </Route>
 
         {/* Catch all - Redirect to dashboard */}

@@ -211,18 +211,19 @@ def admin_login():
 def export_attendance_csv():
     """Genera y descarga un reporte CSV basado en jornadas procesadas."""
     try:
-        period_id = request.args.get('period_id')
         query = """
             SELECT 
-                e.full_name, e.hourly_wage, b.name AS building,
+                e.full_name, b.name AS building,
                 dt.logical_date AS date, dt.first_punch_in AS first_in,
                 dt.last_punch_out AS last_out, dt.status,
                 dt.regular_minutes, dt.overtime_minutes, dt.deficit_minutes,
+                cr.hourly_wage, cr.overtime_multiplier,
                 (SELECT AVG(confidence_score) FROM raw_punches 
                  WHERE employee_id = e.id AND punch_time::date = dt.logical_date) AS bio_avg
             FROM daily_timesheets dt
             JOIN employees e ON e.id = dt.employee_id
             LEFT JOIN buildings b ON b.id = e.primary_building_id
+            LEFT JOIN compensation_rates cr ON cr.id = dt.compensation_rate_id
         """
         params = []
         if period_id:
@@ -239,9 +240,12 @@ def export_attendance_csv():
         writer.writerow(['Empleado', 'Sede', 'Fecha', 'Entrada', 'Salida', 'Estado', 'Horas Reg.', 'Horas Extra', 'Déficit (Min)', 'Biometría (Avg)', 'Tarifa Hora', 'Pago Reg.', 'Pago Extra', 'Total'])
         
         for r in rows:
+            # Si no hay rate_id en el timesheet (registros viejos), buscamos el vigente
             wage = float(r['hourly_wage'] or 0)
+            multiplier = float(r['overtime_multiplier'] or 1.5)
+            
             reg_pay = (r['regular_minutes'] / 60.0) * wage
-            ext_pay = (r['overtime_minutes'] / 60.0) * wage * 1.5
+            ext_pay = (r['overtime_minutes'] / 60.0) * wage * multiplier
             
             writer.writerow([
                 r['full_name'],
@@ -311,12 +315,14 @@ def manage_employees():
         try:
             employees = query_all("""
                 SELECT 
-                    e.id, e.full_name, e.job_title, e.status, e.hourly_wage,
+                    e.id, e.full_name, e.job_title, e.status,
+                    cr.hourly_wage,
                     b.name as building_name,
                     r.name as role_name
                 FROM employees e
                 LEFT JOIN buildings b ON b.id = e.primary_building_id
                 JOIN roles r ON r.id = e.role_id
+                LEFT JOIN compensation_rates cr ON cr.employee_id = e.id AND cr.valid_to IS NULL
                 ORDER BY e.full_name ASC
             """)
             # Convert UUIDs and timestamps to strings if necessary (query_all usually handles this but safety first)
@@ -340,13 +346,20 @@ def manage_employees():
                 return jsonify({'error': 'El nombre es obligatorio'}), 400
                 
             with tx() as (conn, cur):
+                # 1. Crear empleado
                 cur.execute("""
-                    INSERT INTO employees (full_name, job_title, primary_building_id, role_id, hourly_wage)
-                    VALUES (%s, %s, %s, %s, %s) RETURNING id
-                """, (full_name, job_title, building_id, role_id, hourly_wage))
-                row = cur.fetchone()
+                    INSERT INTO employees (full_name, job_title, primary_building_id, role_id)
+                    VALUES (%s, %s, %s, %s) RETURNING id
+                """, (full_name, job_title, building_id, role_id))
+                emp_id = cur.fetchone()['id']
                 
-            return jsonify({'message': 'Empleado creado', 'id': str(row['id'])}), 201
+                # 2. Crear tarifa inicial
+                cur.execute("""
+                    INSERT INTO compensation_rates (employee_id, hourly_wage, valid_from)
+                    VALUES (%s, %s, %s)
+                """, (emp_id, hourly_wage, date.today()))
+                
+            return jsonify({'message': 'Empleado creado', 'id': str(emp_id)}), 201
         except Exception as e:
             print(f'[admin] Error en manage_employees POST: {e}')
             return jsonify({'error': 'Error al crear empleado'}), 500
@@ -372,8 +385,8 @@ def manage_employee_schedule(employee_id):
                 SELECT 
                     day_of_week, start_time, end_time, 
                     building_id, is_overnight, tolerance_minutes
-                FROM schedules 
-                WHERE employee_id = %s
+                FROM schedule_assignments 
+                WHERE employee_id = %s AND valid_to IS NULL
                 ORDER BY day_of_week ASC
             """, (employee_id,))
             
@@ -405,17 +418,44 @@ def manage_employee_schedule(employee_id):
                 if not active:
                     # Si no es día laboral, eliminar si existe
                 with tx() as (conn, cur):
+                    # Buscamos si ya existe un registro vigente idéntico
                     cur.execute("""
-                        INSERT INTO schedules (employee_id, day_of_week, start_time, end_time, building_id, is_overnight, tolerance_minutes)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (employee_id, day_of_week) 
-                        DO UPDATE SET 
-                            start_time = EXCLUDED.start_time,
-                            end_time = EXCLUDED.end_time,
-                            building_id = EXCLUDED.building_id,
-                            is_overnight = EXCLUDED.is_overnight,
-                            tolerance_minutes = EXCLUDED.tolerance_minutes
-                    """, (employee_id, day_num, start, end, build_id, overnight, tol))
+                        SELECT id, start_time, end_time, building_id, is_overnight, tolerance_minutes
+                        FROM schedule_assignments
+                        WHERE employee_id = %s AND day_of_week = %s AND valid_to IS NULL
+                    """, (employee_id, day_num))
+                    existing = cur.fetchone()
+
+                    # Lógica de Versiones (SCD Tipo 2)
+                    if existing:
+                        # Si algo cambió, cerramos el actual e insertamos nuevo
+                        changed = (
+                            existing['start_time'].strftime('%H:%M') != start or 
+                            existing['end_time'].strftime('%H:%M') != end or
+                            str(existing['building_id']) != str(build_id) or
+                            existing['is_overnight'] != overnight or
+                            existing['tolerance_minutes'] != tol
+                        )
+                        
+                        if changed:
+                            # Cerrar actual
+                            cur.execute("""
+                                UPDATE schedule_assignments 
+                                SET valid_to = %s 
+                                WHERE id = %s
+                            """, (date.today() - timedelta(days=1), existing['id']))
+                            
+                            # Insertar nuevo
+                            cur.execute("""
+                                INSERT INTO schedule_assignments (employee_id, day_of_week, start_time, end_time, building_id, is_overnight, tolerance_minutes, valid_from)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                            """, (employee_id, day_num, start, end, build_id, overnight, tol, date.today()))
+                    else:
+                        # Si no existe, insertar nuevo
+                        cur.execute("""
+                            INSERT INTO schedule_assignments (employee_id, day_of_week, start_time, end_time, building_id, is_overnight, tolerance_minutes, valid_from)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """, (employee_id, day_num, start, end, build_id, overnight, tol, date.today()))
                 
             return jsonify({'message': 'Horario actualizado correctamente'}), 200
         except Exception as e:
@@ -574,4 +614,74 @@ def close_payroll_period(period_id):
         return jsonify({'message': 'Periodo cerrado y bloqueado con exito'}), 200
     except Exception as e:
         print(f'[admin] Error al cerrar periodo: {e}')
+        return jsonify({'error': str(e)}), 500
+
+@admin_bp.route('/admin/wfm/issues', methods=['GET'])
+@require_auth
+def get_wfm_issues():
+    """Retorna los timesheets con anomalías o pendientes de revisión en periodos abiertos."""
+    try:
+        rows = query_all("""
+            SELECT 
+                dt.id, e.full_name, dt.logical_date, dt.status, dt.anomaly_flags, 
+                dt.overtime_minutes, dt.first_punch_in, dt.last_punch_out
+            FROM daily_timesheets dt
+            JOIN employees e ON e.id = dt.employee_id
+            JOIN payroll_periods pp ON pp.id = dt.payroll_period_id
+            WHERE pp.state = 'open'
+            AND (
+                dt.status IN ('incomplete', 'exception') 
+                OR (dt.anomaly_flags IS NOT NULL AND dt.anomaly_flags <> '[]'::jsonb)
+                OR dt.overtime_minutes > 0
+            )
+            ORDER BY dt.logical_date DESC, e.full_name ASC
+        """)
+        
+        for r in rows:
+            r['id'] = str(r['id'])
+            r['logical_date'] = r['logical_date'].isoformat()
+            if r['first_punch_in']: r['first_punch_in'] = r['first_punch_in'].isoformat()
+            if r['last_punch_out']: r['last_punch_out'] = r['last_punch_out'].isoformat()
+            
+        return jsonify(rows), 200
+    except Exception as e:
+        print(f'[admin] Error en get_wfm_issues: {e}')
+        return jsonify({'error': str(e)}), 500
+
+@admin_bp.route('/admin/wfm/resolve/<uuid:timesheet_id>', methods=['POST'])
+@require_auth
+def resolve_wfm_issue(timesheet_id):
+    """Resuelve una anomalía insertando una marcación manual y recalculando."""
+    data = request.json
+    action = data.get('action') # 'manual_in', 'manual_out'
+    time_str = data.get('time') # 'HH:MM'
+    reason = data.get('reason')
+    
+    try:
+        # 1. Obtener datos básicos del timesheet
+        ts = query_one("SELECT employee_id, logical_date FROM daily_timesheets WHERE id = %s", (timesheet_id,))
+        if not ts:
+            return jsonify({'error': 'Timesheet no encontrado'}), 404
+            
+        # 2. Insertar marcación manual
+        punch_type = 'in' if action == 'manual_in' else 'out'
+        # Construir el timestamp completo
+        punch_time = datetime.combine(ts['logical_date'], datetime.strptime(time_str, '%H:%M').time())
+        
+        # Si es overnight o fuera de fecha lógica, esto podría ser complejo, 
+        # pero por ahora asumimos que la hora ingresada es para esa fecha lógica.
+        
+        with tx() as (conn, cur):
+            cur.execute("""
+                INSERT INTO raw_punches (employee_id, punch_time, punch_type, ingest_status, biometric_status)
+                VALUES (%s, %s, %s, 'accepted', 'bypassed')
+            """, (ts['employee_id'], punch_time, punch_type))
+            
+        # 3. Recalcular
+        process_timesheet(ts['employee_id'], ts['logical_date'])
+        
+        return jsonify({'message': 'Acción correctiva aplicada y jornada recalculada'}), 200
+        
+    except Exception as e:
+        print(f'[admin] Error en resolve_wfm_issue: {e}')
         return jsonify({'error': str(e)}), 500

@@ -5,7 +5,8 @@ import {
   Users, 
   Building2, 
   LogOut,
-  ShieldCheck
+  ShieldCheck,
+  AlertTriangle
 } from 'lucide-react';
 import './Sidebar.css';
 
@@ -44,6 +45,14 @@ const Sidebar = ({ onLogout }) => {
         >
           <Building2 size={20} />
           <span>Sedes</span>
+        </NavLink>
+
+        <NavLink 
+          to="/wfm" 
+          className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+        >
+          <AlertTriangle size={20} />
+          <span>Monitor WFM</span>
         </NavLink>
       </nav>
 

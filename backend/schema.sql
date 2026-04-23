@@ -64,9 +64,9 @@ CREATE TABLE devices (
 );
 
 -- ──────────────────────────────────────────────────────────────
--- 5. schedules — Horarios Planificados
+-- 5. schedule_assignments — Horarios Planificados (SCD Tipo 2)
 -- ──────────────────────────────────────────────────────────────
-CREATE TABLE schedules (
+CREATE TABLE schedule_assignments (
     id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     employee_id         UUID         NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
     building_id         UUID         REFERENCES buildings(id) ON DELETE SET NULL,
@@ -75,7 +75,35 @@ CREATE TABLE schedules (
     end_time            TIME         NOT NULL,
     is_overnight        BOOLEAN      NOT NULL DEFAULT FALSE,
     tolerance_minutes   INTEGER      NOT NULL DEFAULT 15,
-    UNIQUE (employee_id, day_of_week)
+    valid_from          DATE         NOT NULL DEFAULT CURRENT_DATE,
+    valid_to            DATE,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+-- ──────────────────────────────────────────────────────────────
+-- 5.1 compensation_rates — Tarifas y Sueldos (SCD Tipo 2)
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE compensation_rates (
+    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    employee_id         UUID         NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    hourly_wage         NUMERIC(12,2) NOT NULL,
+    overtime_multiplier NUMERIC(4,2)  NOT NULL DEFAULT 1.5,
+    valid_from          DATE         NOT NULL DEFAULT CURRENT_DATE,
+    valid_to            DATE,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+-- ──────────────────────────────────────────────────────────────
+-- 5.2 leaves — Permisos y Ausencias
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE leaves (
+    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    employee_id         UUID         NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    logical_date        DATE         NOT NULL,
+    leave_type          VARCHAR(50)  NOT NULL, -- 'Vacaciones', 'Salud', 'Personal'
+    is_paid             BOOLEAN      DEFAULT TRUE,
+    created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    UNIQUE (employee_id, logical_date)
 );
 
 -- ──────────────────────────────────────────────────────────────
@@ -89,7 +117,10 @@ CREATE TABLE raw_punches (
     punch_type        VARCHAR(10)  NOT NULL CHECK (punch_type IN ('in', 'out')),
     confidence_score  NUMERIC(5,2),
     offline_sync      BOOLEAN      NOT NULL DEFAULT FALSE,
-    client_uuid       UUID         UNIQUE, -- Idempotencia desde el cliente
+    client_uuid       UUID         UNIQUE,
+    ingest_status     VARCHAR(20)  DEFAULT 'accepted' CHECK (ingest_status IN ('accepted', 'late_pending_review', 'rejected')),
+    biometric_status  VARCHAR(20)  DEFAULT 'unavailable' CHECK (biometric_status IN ('passed', 'failed', 'unavailable', 'bypassed')),
+    biometric_provider VARCHAR(50),
     created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
@@ -102,18 +133,23 @@ CREATE INDEX idx_punches_time     ON raw_punches (punch_time);
 CREATE TYPE timesheet_status AS ENUM ('incomplete', 'perfect', 'exception', 'resolved');
 
 CREATE TABLE daily_timesheets (
-    id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    employee_id       UUID         NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-    logical_date      DATE         NOT NULL,
-    schedule_id       UUID         REFERENCES schedules(id) ON DELETE SET NULL,
-    first_punch_in    TIMESTAMPTZ,
-    last_punch_out    TIMESTAMPTZ,
-    regular_minutes   INTEGER      DEFAULT 0,
-    overtime_minutes  INTEGER      DEFAULT 0,
-    deficit_minutes   INTEGER      DEFAULT 0,
-    status            timesheet_status NOT NULL DEFAULT 'incomplete',
-    created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    id                      UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    employee_id             UUID         NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    logical_date            DATE         NOT NULL,
+    schedule_assignment_id  UUID         REFERENCES schedule_assignments(id) ON DELETE SET NULL,
+    compensation_rate_id    UUID         REFERENCES compensation_rates(id) ON DELETE SET NULL,
+    payroll_period_id       UUID         REFERENCES payroll_periods(id) ON DELETE SET NULL,
+    first_punch_in          TIMESTAMPTZ,
+    last_punch_out          TIMESTAMPTZ,
+    regular_minutes         INTEGER      DEFAULT 0,
+    overtime_minutes        INTEGER      DEFAULT 0,
+    deficit_minutes         INTEGER      DEFAULT 0,
+    worked_minutes_total    INTEGER      DEFAULT 0,
+    status                  timesheet_status NOT NULL DEFAULT 'incomplete',
+    anomaly_flags           JSONB        DEFAULT '[]'::jsonb,
+    is_locked               BOOLEAN      DEFAULT FALSE,
+    created_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at              TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     UNIQUE (employee_id, logical_date)
 );
 
@@ -133,7 +169,32 @@ CREATE TABLE audit_logs (
 );
 
 -- ──────────────────────────────────────────────────────────────
--- 9. time_exceptions — Resoluciones WFM
+-- 9. payroll_periods — Ciclos de Nómina y Bloqueo
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE payroll_periods (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name        VARCHAR(100) NOT NULL,
+    starts_on   DATE NOT NULL,
+    ends_on     DATE NOT NULL,
+    state       VARCHAR(20) DEFAULT 'open' CHECK (state IN ('open', 'closed')),
+    closed_at   TIMESTAMPTZ,
+    closed_by   UUID,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ──────────────────────────────────────────────────────────────
+-- 10. system_users — Autenticación del Panel
+-- ──────────────────────────────────────────────────────────────
+CREATE TABLE system_users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    username VARCHAR(50) UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ──────────────────────────────────────────────────────────────
+-- 11. time_exceptions — Resoluciones WFM
 -- ──────────────────────────────────────────────────────────────
 CREATE TABLE time_exceptions (
     id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -179,48 +240,6 @@ VALUES (
     'a1b2c3d4-0000-0000-0000-000000000001',
     'Tablet de Juan'
 );
-
--- Schedules
-INSERT INTO schedules (id, employee_id, building_id, day_of_week, start_time, end_time)
-VALUES
-    ('c0e0e0e0-0000-0000-0000-000000000001', 'a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 0, '08:00', '17:00'),
-    ('c0e0e0e0-0000-0000-0000-000000000002', 'a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 1, '08:00', '17:00'),
-    ('c0e0e0e0-0000-0000-0000-000000000003', 'a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 2, '08:00', '17:00'),
-    ('c0e0e0e0-0000-0000-0000-000000000004', 'a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 3, '08:00', '17:00'),
-    ('c0e0e0e0-0000-0000-0000-000000000005', 'a1b2c3d4-0000-0000-0000-000000000001', 'e0e0e0e0-0000-0000-0000-000000000001', 4, '08:00', '17:00');
-
--- ──────────────────────────────────────────────────────────────
--- 10. payroll_periods — Ciclos de Nómina y Bloqueo
--- ──────────────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS payroll_periods (
-    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name        VARCHAR(100) NOT NULL,
-    starts_on   DATE NOT NULL,
-    ends_on     DATE NOT NULL,
-    state       VARCHAR(20) DEFAULT 'open' CHECK (state IN ('open', 'closed')),
-    closed_at   TIMESTAMPTZ,
-    closed_by   UUID REFERENCES system_users(id),
-    created_at  TIMESTAMPTZ DEFAULT NOW()
-);
-
--- Actualización de tablas existentes para soportar bloqueo
-ALTER TABLE daily_timesheets ADD COLUMN IF NOT EXISTS payroll_period_id UUID REFERENCES payroll_periods(id);
-ALTER TABLE daily_timesheets ADD COLUMN IF NOT EXISTS is_locked BOOLEAN DEFAULT FALSE;
-ALTER TABLE raw_punches ADD COLUMN IF NOT EXISTS ingest_status VARCHAR(20) DEFAULT 'accepted' CHECK (ingest_status IN ('accepted', 'late_pending_review', 'rejected'));
-
--- Phase 26: Autenticación y Usuarios de Sistema
-CREATE TABLE IF NOT EXISTS system_users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    username VARCHAR(50) UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-);
-
--- Seed: admin / Hernandez2026
-INSERT INTO system_users (username, password_hash)
-VALUES ('admin', 'scrypt:32768:8:1$nPnHMCE4QJlQRPuD$5f3f2e7e70ac807947665f41d89e52223e1fb6cf8b650ac66be4a3d48b9d552993b1cf9917a03f29824eb09bb1c3301d7e22e3f3dab110296fa6e442d780ed6f')
-ON CONFLICT (username) DO NOTHING;
 
 -- Seed: Periodos iniciales
 INSERT INTO payroll_periods (name, starts_on, ends_on, state)
