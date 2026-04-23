@@ -75,7 +75,8 @@ def get_admin_attendance():
                 b.name      AS building_name,
                 rp.punch_type,
                 rp.punch_time,
-                rp.confidence_score
+                rp.confidence_score,
+                rp.biometric_status
             FROM raw_punches rp
             JOIN employees e ON e.id = rp.employee_id
             LEFT JOIN buildings b ON b.id = e.primary_building_id
@@ -93,7 +94,8 @@ def get_admin_attendance():
                 'action': r['punch_type'],
                 'time': r['punch_time'].isoformat(),
                 'method': 'Biométrico',
-                'confidence': r['confidence_score']
+                'confidence': r['confidence_score'],
+                'biometric_status': r['biometric_status']
             })
             
         return jsonify(records), 200

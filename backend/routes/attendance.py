@@ -86,14 +86,21 @@ def register_attendance():
 
         # ── Validación Biométrica ──
         photo_base64 = data.get('photo')
+        
+        # P0: Rechazar si no hay foto
+        if not photo_base64:
+            return jsonify({
+                'success': False,
+                'error': 'La fotografía es obligatoria para registrar asistencia.'
+            }), 400
+
         biometric_result = verify_face(photo_base64, device['employee_id'])
 
-        if not biometric_result.get('match'):
-            return jsonify({
-                'success': False, 
-                'error': 'Validación biométrica fallida. El rostro no coincide.'
-            }), 401
-
+        # Aunque el match falle, guardamos el punch para auditoría,
+        # pero informamos del fallo si no hay match.
+        match = biometric_result.get('match', False)
+        bio_status = biometric_result.get('status', 'failed')
+        bio_provider = biometric_result.get('provider', 'none')
         confidence = biometric_result.get('confidence', 0)
 
         punch_type = 'in' if action_type in ('check_in', 'in') else 'out'
@@ -103,19 +110,34 @@ def register_attendance():
         punch_time = data.get('punch_time') 
 
         # ── Inserción en DB ──
-        # Usamos COALESCE(..., NOW()) para que si punch_time es NULL use la hora del servidor
         from utils.db import tx
         with tx() as (conn, cur):
             cur.execute(
                 """
-                INSERT INTO raw_punches (employee_id, device_id, punch_time, punch_type, confidence_score, offline_sync, client_uuid)
-                VALUES (%s, %s, COALESCE(%s, NOW()), %s, %s, %s, %s)
+                INSERT INTO raw_punches (
+                    employee_id, device_id, punch_time, punch_type, 
+                    confidence_score, biometric_status, biometric_provider,
+                    offline_sync, client_uuid
+                )
+                VALUES (%s, %s, COALESCE(%s, NOW()), %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (client_uuid) DO UPDATE SET created_at = EXCLUDED.created_at -- Idempotencia
                 RETURNING id, punch_type, punch_time
                 """,
-                (device['employee_id'], device['device_id'], punch_time, punch_type, confidence, offline_sync, client_uuid)
+                (
+                    device['employee_id'], device['device_id'], punch_time, punch_type, 
+                    confidence, bio_status, bio_provider,
+                    offline_sync, client_uuid
+                )
             )
             row = cur.fetchone()
+
+        if not match:
+            return jsonify({
+                'success': False,
+                'error': 'Validación biométrica fallida o no disponible.',
+                'biometric_status': bio_status,
+                'record_id': str(row['id'])
+            }), 401
 
         return jsonify({
             'success': True,
@@ -125,6 +147,7 @@ def register_attendance():
                 'punch_type': row['punch_type'],
                 'timestamp': row['punch_time'].isoformat(),
                 'confidence_score': confidence,
+                'biometric_status': bio_status
             }
         }), 201
     except Exception as e:

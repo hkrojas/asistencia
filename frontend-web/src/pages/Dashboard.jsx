@@ -232,15 +232,19 @@ export default function Dashboard() {
                       </span>
                     </td>
                     <td>
-                      {r.confidence && r.method !== 'Manual' ? (
+                      {r.method !== 'Manual' ? (
                         <div className={`biometric-status ${
-                          r.confidence >= 95 ? 'text-success' : 
-                          r.confidence >= 90 ? 'text-warning' : 'text-danger'
+                          r.biometric_status === 'passed' ? 'text-success' : 
+                          r.biometric_status === 'unavailable' ? 'text-warning' : 'text-danger'
                         }`}>
-                          {r.confidence >= 95 ? (
-                            <><ShieldCheck size={14} /> Alta ({r.confidence}%)</>
+                          {r.biometric_status === 'passed' ? (
+                            <><ShieldCheck size={14} /> Verificado</>
+                          ) : r.biometric_status === 'unavailable' ? (
+                            <><AlertTriangle size={14} /> N/D (Offline)</>
+                          ) : r.biometric_status === 'failed' ? (
+                            <><UserX size={14} /> No Coincide</>
                           ) : (
-                            <><AlertCircle size={14} /> Revisar ({r.confidence}%)</>
+                            <><Clock size={14} /> {r.biometric_status}</>
                           )}
                         </div>
                       ) : (
