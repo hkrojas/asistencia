@@ -12,7 +12,7 @@ function App() {
 
   useEffect(() => {
     const token = localStorage.getItem('admin_token');
-    if (token === 'admin-token-xyz') {
+    if (token) {
       setIsAuthenticated(true);
     }
     setLoading(false);

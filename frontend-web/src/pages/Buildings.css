@@ -116,6 +116,28 @@
   padding: 4px 8px;
 }
 
+.pair-btn {
+  background: #28a745;
+  color: white;
+  border: none;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 13px;
+}
+
+.pair-btn:hover {
+  background: #218838;
+  transform: translateY(-1px);
+}
+
+.table-actions {
+  display: flex;
+  align-items: center;
+}
+
 /* Modal Styles */
 .modal-overlay {
   position: fixed;

@@ -154,6 +154,16 @@ export async function checkDeviceToken(deviceToken) {
 }
 
 /**
+ * Vincula el dispositivo usando el código de 6 dígitos.
+ */
+export async function pairDevice(pairingCode) {
+  return await request('/devices/pair', {
+    method: 'POST',
+    body: JSON.stringify({ pairing_code: pairingCode }),
+  });
+}
+
+/**
  * Consulta el estado actual del trabajador.
  */
 export async function fetchCurrentState(deviceToken) {

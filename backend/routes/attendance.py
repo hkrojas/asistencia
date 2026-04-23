@@ -1,4 +1,5 @@
 from flask import Blueprint, request, jsonify
+import hashlib
 from utils.db import query_one, query_all, execute
 from services.biometrics import verify_face
 
@@ -6,16 +7,16 @@ attendance_bp = Blueprint('attendance', __name__)
 
 
 def _get_employee_from_token(token):
-    """Helper: obtiene employee_id y device_id a partir del device_token."""
+    """Helper: obtiene employee_id y device_id a partir del device_token (hashed)."""
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
     return query_one(
         """
-        SELECT d.id AS device_id, d.employee_id, e.primary_building_id
+        SELECT d.id AS device_id, d.employee_id, d.building_id
           FROM devices d
-          JOIN employees e ON e.id = d.employee_id
-         WHERE d.device_token = %s
+         WHERE d.token_hash = %s
            AND d.is_active = TRUE
         """,
-        (token,)
+        (token_hash,)
     )
 
 
@@ -103,15 +104,18 @@ def register_attendance():
 
         # ── Inserción en DB ──
         # Usamos COALESCE(..., NOW()) para que si punch_time es NULL use la hora del servidor
-        row = execute(
-            """
-            INSERT INTO raw_punches (employee_id, device_id, punch_time, punch_type, confidence_score, offline_sync, client_uuid)
-            VALUES (%s, %s, COALESCE(%s, NOW()), %s, %s, %s, %s)
-            ON CONFLICT (client_uuid) DO UPDATE SET created_at = EXCLUDED.created_at -- Idempotencia
-            RETURNING id, punch_type, punch_time
-            """,
-            (device['employee_id'], device['device_id'], punch_time, punch_type, confidence, offline_sync, client_uuid)
-        )
+        from utils.db import tx
+        with tx() as (conn, cur):
+            cur.execute(
+                """
+                INSERT INTO raw_punches (employee_id, device_id, punch_time, punch_type, confidence_score, offline_sync, client_uuid)
+                VALUES (%s, %s, COALESCE(%s, NOW()), %s, %s, %s, %s)
+                ON CONFLICT (client_uuid) DO UPDATE SET created_at = EXCLUDED.created_at -- Idempotencia
+                RETURNING id, punch_type, punch_time
+                """,
+                (device['employee_id'], device['device_id'], punch_time, punch_type, confidence, offline_sync, client_uuid)
+            )
+            row = cur.fetchone()
 
         return jsonify({
             'success': True,

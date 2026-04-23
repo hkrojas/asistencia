@@ -16,9 +16,17 @@ def create_app():
         'postgresql://postgres:postgres@localhost:5432/asistencia'
     )
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
+    app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'super-secret-key-12345')
 
-    # ── CORS — permitir peticiones desde la app móvil y el panel web ──
-    CORS(app, resources={r"/*": {"origins": "*"}})
+    # ── CORS — Restringido por rutas para mayor seguridad ──
+    CORS(app, resources={
+        r"/v1/admin/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000"]},
+        r"/v1/attendance/*": {"origins": "*"},
+        r"/v1/devices/*": {"origins": "*"},
+        r"/v1/schedules/*": {"origins": "*"},
+        r"/ping": {"origins": "*"},
+        r"/api/health": {"origins": "*"}
+    })
 
     # ── Rutas de salud ──
     @app.route('/ping', methods=['GET'])

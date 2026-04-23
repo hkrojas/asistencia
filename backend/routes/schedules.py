@@ -1,4 +1,5 @@
 from flask import Blueprint, request, jsonify
+import hashlib
 from utils.db import query_one, query_all
 
 schedules_bp = Blueprint('schedules', __name__)
@@ -23,16 +24,17 @@ def get_weekly_schedule():
         return jsonify({'error': 'X-Device-Token header es requerido'}), 401
 
     try:
-        # Obtener empleado desde el token
+        # Obtener empleado desde el token (hashed)
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
         device = query_one(
             """
             SELECT d.employee_id, e.full_name
               FROM devices d
               JOIN employees e ON e.id = d.employee_id
-             WHERE d.device_token = %s
+             WHERE d.token_hash = %s
                AND d.is_active = TRUE
             """,
-            (token,)
+            (token_hash,)
         )
 
         if not device:

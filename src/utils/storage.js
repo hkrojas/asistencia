@@ -1,16 +1,16 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 
 const KEYS = {
-  DEVICE_TOKEN: '@asistencia/device_token',
+  DEVICE_TOKEN: 'device_token',
 };
 
 /**
- * Guarda el token de dispositivo en almacenamiento local.
+ * Guarda el token de dispositivo en almacenamiento SEGURO.
  * @param {string} token
  */
 export async function saveDeviceToken(token) {
   try {
-    await AsyncStorage.setItem(KEYS.DEVICE_TOKEN, token);
+    await SecureStore.setItemAsync(KEYS.DEVICE_TOKEN, token);
   } catch (error) {
     console.error('[Storage] Error guardando device_token:', error);
     throw error;
@@ -18,12 +18,12 @@ export async function saveDeviceToken(token) {
 }
 
 /**
- * Lee el token de dispositivo desde almacenamiento local.
+ * Lee el token de dispositivo desde almacenamiento SEGURO.
  * @returns {Promise<string|null>}
  */
 export async function getDeviceToken() {
   try {
-    return await AsyncStorage.getItem(KEYS.DEVICE_TOKEN);
+    return await SecureStore.getItemAsync(KEYS.DEVICE_TOKEN);
   } catch (error) {
     console.error('[Storage] Error leyendo device_token:', error);
     return null;
@@ -35,7 +35,7 @@ export async function getDeviceToken() {
  */
 export async function removeDeviceToken() {
   try {
-    await AsyncStorage.removeItem(KEYS.DEVICE_TOKEN);
+    await SecureStore.deleteItemAsync(KEYS.DEVICE_TOKEN);
   } catch (error) {
     console.error('[Storage] Error eliminando device_token:', error);
   }

@@ -1,13 +1,43 @@
 from flask import Blueprint, jsonify, Response, request
+import os
+import jwt
 import csv
 import io
 from datetime import datetime, timedelta, date
-from utils.db import query_one, query_all
+from functools import wraps
+from werkzeug.security import check_password_hash
+import random
+import hashlib
+from utils.db import query_one, query_all, tx, execute
 from services.timesheet_engine import process_timesheet
 
 admin_bp = Blueprint('admin', __name__)
 
+def require_auth(f):
+    """Decorador para proteger rutas administrativas con JWT."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        if 'Authorization' in request.headers:
+            auth_header = request.headers['Authorization']
+            if auth_header.startswith('Bearer '):
+                token = auth_header.split(" ")[1]
+        
+        if not token:
+            return jsonify({'error': 'Acceso denegado. Token no proporcionado.'}), 401
+        
+        try:
+            jwt.decode(token, os.getenv('JWT_SECRET_KEY', 'super-secret'), algorithms=["HS256"])
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'Sesión expirada. Por favor inicie sesión de nuevo.'}), 401
+        except Exception:
+            return jsonify({'error': 'Token inválido o malformado.'}), 401
+            
+        return f(*args, **kwargs)
+    return decorated
+
 @admin_bp.route('/admin/stats', methods=['GET'])
+@require_auth
 def get_admin_stats():
     """Calcula las métricas principales para el dashboard de RRHH."""
     try:
@@ -34,6 +64,7 @@ def get_admin_stats():
         return jsonify({'error': 'Error al obtener estadísticas'}), 500
 
 @admin_bp.route('/admin/attendance', methods=['GET'])
+@require_auth
 def get_admin_attendance():
     """Retorna el historial reciente de registros para la tabla del dashboard."""
     try:
@@ -72,6 +103,7 @@ def get_admin_attendance():
         return jsonify({'error': 'Error al obtener historial de asistencia'}), 500
 
 @admin_bp.route('/admin/exceptions/pending', methods=['GET'])
+@require_auth
 def get_pending_exceptions():
     """Identifica registros de salida con tiempo excedente sin resolución."""
     try:
@@ -116,6 +148,7 @@ def get_pending_exceptions():
         return jsonify({'error': 'Error al obtener incidencias'}), 500
 
 @admin_bp.route('/admin/exceptions/resolve', methods=['POST'])
+@require_auth
 def resolve_exception():
     """Registra la resolución de una incidencia en time_exceptions."""
     from flask import request
@@ -135,11 +168,11 @@ def resolve_exception():
         # Calculamos minutos de ajuste si no vienen (simplificado)
         minutes = data.get('minutes_adjusted', 60) 
 
-        query_one("""
-            INSERT INTO time_exceptions (employee_id, date, exception_type, minutes_adjusted, approved_by, reason)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            RETURNING id
-        """, (log_data['employee_id'], log_data['punch_time'], res_type, minutes, admin_id, 'Resolución desde Panel Web'))
+        with tx() as (conn, cur):
+            cur.execute("""
+                INSERT INTO time_exceptions (employee_id, date, exception_type, minutes_adjusted, approved_by, reason)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (log_data['employee_id'], log_data['punch_time'], res_type, minutes, admin_id, 'Resolución desde Panel Web'))
         
         return jsonify({'message': 'Resolución registrada con éxito'}), 200
         
@@ -148,27 +181,31 @@ def resolve_exception():
         return jsonify({'error': 'Error al registrar resolución'}), 500
 @admin_bp.route('/admin/login', methods=['POST'])
 def admin_login():
-    """Valida las credenciales del administrador para el panel web."""
-    from flask import request
+    """Valida credenciales contra DB y genera JWT."""
     data = request.json
-    
     username = data.get('username')
     password = data.get('password')
     
-    # Lógica MVP de validación
-    if username == "admin" and password == "Hernandez2026":
+    user = query_one("SELECT * FROM system_users WHERE username = %s AND is_active = TRUE", (username,))
+    
+    if user and check_password_hash(user['password_hash'], password):
+        # Generar Token (Validez 8 horas)
+        token = jwt.encode({
+            'user_id': str(user['id']),
+            'username': user['username'],
+            'exp': datetime.utcnow() + timedelta(hours=8)
+        }, os.getenv('JWT_SECRET_KEY', 'super-secret'), algorithm="HS256")
+        
         return jsonify({
             'success': True,
-            'token': 'admin-token-xyz',
-            'message': 'Login exitoso'
+            'token': token,
+            'message': 'Bienvenido al sistema'
         }), 200
         
-    return jsonify({
-        'success': False,
-        'error': 'Credenciales incorrectas'
-    }), 401
+    return jsonify({'success': False, 'error': 'Credenciales inválidas'}), 401
 
 @admin_bp.route('/admin/export/csv', methods=['GET'])
+@require_auth
 def export_attendance_csv():
     """Genera y descarga un reporte CSV basado en jornadas procesadas."""
     try:
@@ -232,6 +269,7 @@ def export_attendance_csv():
         return jsonify({'error': 'Error al generar CSV'}), 500
 
 @admin_bp.route('/admin/buildings', methods=['GET', 'POST'])
+@require_auth
 def manage_buildings():
     from flask import request
     if request.method == 'GET':
@@ -250,16 +288,20 @@ def manage_buildings():
             if not name:
                 return jsonify({'error': 'El nombre es obligatorio'}), 400
                 
-            new_id = query_one("""
-                INSERT INTO buildings (name, address) 
-                VALUES (%s, %s) RETURNING id
-            """, (name, address))
-            return jsonify({'message': 'Sede creada', 'id': str(new_id['id'])}), 201
+            with tx() as (conn, cur):
+                cur.execute("""
+                    INSERT INTO buildings (name, address) 
+                    VALUES (%s, %s) RETURNING id
+                """, (name, address))
+                row = cur.fetchone()
+                
+            return jsonify({'message': 'Sede creada', 'id': str(row['id'])}), 201
         except Exception as e:
             print(f'[admin] Error en manage_buildings POST: {e}')
             return jsonify({'error': 'Error al crear sede'}), 500
 
 @admin_bp.route('/admin/employees', methods=['GET', 'POST'])
+@require_auth
 def manage_employees():
     from flask import request
     if request.method == 'GET':
@@ -294,16 +336,20 @@ def manage_employees():
             if not full_name:
                 return jsonify({'error': 'El nombre es obligatorio'}), 400
                 
-            new_id = query_one("""
-                INSERT INTO employees (full_name, job_title, primary_building_id, role_id, hourly_wage)
-                VALUES (%s, %s, %s, %s, %s) RETURNING id
-            """, (full_name, job_title, building_id, role_id, hourly_wage))
-            return jsonify({'message': 'Empleado creado', 'id': str(new_id['id'])}), 201
+            with tx() as (conn, cur):
+                cur.execute("""
+                    INSERT INTO employees (full_name, job_title, primary_building_id, role_id, hourly_wage)
+                    VALUES (%s, %s, %s, %s, %s) RETURNING id
+                """, (full_name, job_title, building_id, role_id, hourly_wage))
+                row = cur.fetchone()
+                
+            return jsonify({'message': 'Empleado creado', 'id': str(row['id'])}), 201
         except Exception as e:
             print(f'[admin] Error en manage_employees POST: {e}')
             return jsonify({'error': 'Error al crear empleado'}), 500
 
 @admin_bp.route('/admin/roles', methods=['GET'])
+@require_auth
 def get_roles():
     try:
         roles = query_all("SELECT id, name FROM roles ORDER BY name ASC")
@@ -314,6 +360,7 @@ def get_roles():
         return jsonify({'error': 'Error al obtener roles'}), 500
 
 @admin_bp.route('/admin/employees/<uuid:employee_id>/schedule', methods=['GET', 'POST'])
+@require_auth
 def manage_employee_schedule(employee_id):
     from flask import request
     if request.method == 'GET':
@@ -354,21 +401,18 @@ def manage_employee_schedule(employee_id):
                 
                 if not active:
                     # Si no es día laboral, eliminar si existe
-                    query_one("DELETE FROM schedules WHERE employee_id = %s AND day_of_week = %s RETURNING id", (employee_id, day_num))
-                    continue
-
-                query_one("""
-                    INSERT INTO schedules (employee_id, day_of_week, start_time, end_time, building_id, is_overnight, tolerance_minutes)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (employee_id, day_of_week) 
-                    DO UPDATE SET 
-                        start_time = EXCLUDED.start_time,
-                        end_time = EXCLUDED.end_time,
-                        building_id = EXCLUDED.building_id,
-                        is_overnight = EXCLUDED.is_overnight,
-                        tolerance_minutes = EXCLUDED.tolerance_minutes
-                    RETURNING id
-                """, (employee_id, day_num, start, end, build_id, overnight, tol))
+                with tx() as (conn, cur):
+                    cur.execute("""
+                        INSERT INTO schedules (employee_id, day_of_week, start_time, end_time, building_id, is_overnight, tolerance_minutes)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (employee_id, day_of_week) 
+                        DO UPDATE SET 
+                            start_time = EXCLUDED.start_time,
+                            end_time = EXCLUDED.end_time,
+                            building_id = EXCLUDED.building_id,
+                            is_overnight = EXCLUDED.is_overnight,
+                            tolerance_minutes = EXCLUDED.tolerance_minutes
+                    """, (employee_id, day_num, start, end, build_id, overnight, tol))
                 
             return jsonify({'message': 'Horario actualizado correctamente'}), 200
         except Exception as e:
@@ -376,6 +420,7 @@ def manage_employee_schedule(employee_id):
             return jsonify({'error': 'Error al actualizar horario'}), 500
 
 @admin_bp.route('/admin/leaves', methods=['POST'])
+@require_auth
 def create_leave():
     """Registra una ausencia justificada para un empleado."""
     try:
@@ -388,14 +433,14 @@ def create_leave():
         if not employee_id or not logical_date or not leave_type:
             return jsonify({'error': 'Faltan datos obligatorios'}), 400
 
-        query_one("""
-            INSERT INTO leaves (employee_id, logical_date, leave_type, is_paid)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (employee_id, logical_date) DO UPDATE SET
-                leave_type = EXCLUDED.leave_type,
-                is_paid = EXCLUDED.is_paid
-            RETURNING id
-        """, (employee_id, logical_date, leave_type, is_paid))
+        with tx() as (conn, cur):
+            cur.execute("""
+                INSERT INTO leaves (employee_id, logical_date, leave_type, is_paid)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (employee_id, logical_date) DO UPDATE SET
+                    leave_type = EXCLUDED.leave_type,
+                    is_paid = EXCLUDED.is_paid
+            """, (employee_id, logical_date, leave_type, is_paid))
         
         # Al registrar un permiso, forzamos el reprocesamiento del timesheet para ese día
         from services.timesheet_engine import process_timesheet
@@ -407,6 +452,7 @@ def create_leave():
         return jsonify({'error': 'Error al registrar permiso'}), 500
 
 @admin_bp.route('/admin/timesheets/process', methods=['POST'])
+@require_auth
 def process_all_timesheets():
     """
     Procesa las jornadas para todos los empleados activos en un rango de fechas.
@@ -441,3 +487,31 @@ def process_all_timesheets():
     except Exception as e:
         print(f'[admin] Error en process_all_timesheets: {e}')
         return jsonify({'error': str(e)}), 500
+@admin_bp.route('/admin/devices/pairing-code', methods=['POST'])
+@require_auth
+def generate_pairing_code():
+    """Genera un código de emparejamiento de 6 dígitos para un edificio."""
+    data = request.get_json(silent=True)
+    if not data or 'building_id' not in data:
+        return jsonify({'error': 'building_id es requerido'}), 400
+        
+    building_id = data['building_id']
+    # Generar código de 6 dígitos
+    code = f"{random.randint(0, 999999):06d}"
+    code_hash = hashlib.sha256(code.encode()).hexdigest()
+    expires_at = datetime.now() + timedelta(minutes=15)
+    
+    try:
+        with tx() as (conn, cur):
+            cur.execute("""
+                INSERT INTO device_pairing_codes (code_hash, building_id, expires_at)
+                VALUES (%s, %s, %s)
+            """, (code_hash, building_id, expires_at))
+            
+        return jsonify({
+            'code': code,
+            'expires_at': expires_at.isoformat()
+        }), 201
+    except Exception as e:
+        print(f'[admin] Error al generar pairing code: {e}')
+        return jsonify({'error': 'Error interno al generar código'}), 500

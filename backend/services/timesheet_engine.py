@@ -1,5 +1,5 @@
 from datetime import datetime, date, timedelta
-from utils.db import query_one, query_all
+from utils.db import query_one, query_all, tx
 
 def process_timesheet(employee_id, logical_date):
     """
@@ -46,16 +46,16 @@ def process_timesheet(employee_id, logical_date):
         if not punches:
             # Si hay permiso, el status es 'leave' y deficit es 0
             if leave:
-                query_one("""
-                    INSERT INTO daily_timesheets (employee_id, logical_date, schedule_id, deficit_minutes, status)
-                    VALUES (%s, %s, %s, 0, 'resolved')
-                    ON CONFLICT (employee_id, logical_date) DO UPDATE SET
-                        schedule_id = EXCLUDED.schedule_id,
-                        deficit_minutes = 0,
-                        status = 'resolved',
-                        updated_at = NOW()
-                    RETURNING id
-                """, (employee_id, logical_date, schedule['id']))
+                with tx() as (conn, cur):
+                    cur.execute("""
+                        INSERT INTO daily_timesheets (employee_id, logical_date, schedule_id, deficit_minutes, status)
+                        VALUES (%s, %s, %s, 0, 'resolved')
+                        ON CONFLICT (employee_id, logical_date) DO UPDATE SET
+                            schedule_id = EXCLUDED.schedule_id,
+                            deficit_minutes = 0,
+                            status = 'resolved',
+                            updated_at = NOW()
+                    """, (employee_id, logical_date, schedule['id']))
                 return True
 
             expected_start = datetime.combine(logical_date, schedule['start_time'])
@@ -65,16 +65,16 @@ def process_timesheet(employee_id, logical_date):
             
             duration = int((expected_end - expected_start).total_seconds() / 60)
             
-            query_one("""
-                INSERT INTO daily_timesheets (employee_id, logical_date, schedule_id, deficit_minutes, status)
-                VALUES (%s, %s, %s, %s, 'exception')
-                ON CONFLICT (employee_id, logical_date) DO UPDATE SET
-                    schedule_id = EXCLUDED.schedule_id,
-                    deficit_minutes = EXCLUDED.deficit_minutes,
-                    status = EXCLUDED.status,
-                    updated_at = NOW()
-                RETURNING id
-            """, (employee_id, logical_date, schedule['id'], duration))
+            with tx() as (conn, cur):
+                cur.execute("""
+                    INSERT INTO daily_timesheets (employee_id, logical_date, schedule_id, deficit_minutes, status)
+                    VALUES (%s, %s, %s, %s, 'exception')
+                    ON CONFLICT (employee_id, logical_date) DO UPDATE SET
+                        schedule_id = EXCLUDED.schedule_id,
+                        deficit_minutes = EXCLUDED.deficit_minutes,
+                        status = EXCLUDED.status,
+                        updated_at = NOW()
+                """, (employee_id, logical_date, schedule['id'], duration))
             return True
             
         # 5. Extraer primer IN y último OUT
@@ -83,16 +83,16 @@ def process_timesheet(employee_id, logical_date):
         
         # Si falta alguna de las marcaciones
         if not first_in or not last_out:
-            query_one("""
-                INSERT INTO daily_timesheets (employee_id, logical_date, schedule_id, first_punch_in, last_punch_out, status)
-                VALUES (%s, %s, %s, %s, %s, 'incomplete')
-                ON CONFLICT (employee_id, logical_date) DO UPDATE SET
-                    first_punch_in = EXCLUDED.first_punch_in,
-                    last_punch_out = EXCLUDED.last_punch_out,
-                    status = 'incomplete',
-                    updated_at = NOW()
-                RETURNING id
-            """, (employee_id, logical_date, schedule['id'], first_in, last_out))
+            with tx() as (conn, cur):
+                cur.execute("""
+                    INSERT INTO daily_timesheets (employee_id, logical_date, schedule_id, first_punch_in, last_punch_out, status)
+                    VALUES (%s, %s, %s, %s, %s, 'incomplete')
+                    ON CONFLICT (employee_id, logical_date) DO UPDATE SET
+                        first_punch_in = EXCLUDED.first_punch_in,
+                        last_punch_out = EXCLUDED.last_punch_out,
+                        status = 'incomplete',
+                        updated_at = NOW()
+                """, (employee_id, logical_date, schedule['id'], first_in, last_out))
             return True
 
         # 6. Cálculos de Tiempos
@@ -131,22 +131,22 @@ def process_timesheet(employee_id, logical_date):
             status = 'perfect' if deficit_mins == 0 and overtime_mins == 0 else 'exception'
         
         # 7. Guardar resultados (UPSERT)
-        query_one("""
-            INSERT INTO daily_timesheets 
-                (employee_id, logical_date, schedule_id, first_punch_in, last_punch_out, regular_minutes, overtime_minutes, deficit_minutes, status)
-            VALUES 
-                (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (employee_id, logical_date) DO UPDATE SET
-                schedule_id = EXCLUDED.schedule_id,
-                first_punch_in = EXCLUDED.first_punch_in,
-                last_punch_out = EXCLUDED.last_punch_out,
-                regular_minutes = EXCLUDED.regular_minutes,
-                overtime_minutes = EXCLUDED.overtime_minutes,
-                deficit_minutes = EXCLUDED.deficit_minutes,
-                status = EXCLUDED.status,
-                updated_at = NOW()
-            RETURNING id
-        """, (employee_id, logical_date, schedule['id'], first_in, last_out, regular_mins, overtime_mins, deficit_mins, status))
+        with tx() as (conn, cur):
+            cur.execute("""
+                INSERT INTO daily_timesheets 
+                    (employee_id, logical_date, schedule_id, first_punch_in, last_punch_out, regular_minutes, overtime_minutes, deficit_minutes, status)
+                VALUES 
+                    (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (employee_id, logical_date) DO UPDATE SET
+                    schedule_id = EXCLUDED.schedule_id,
+                    first_punch_in = EXCLUDED.first_punch_in,
+                    last_punch_out = EXCLUDED.last_punch_out,
+                    regular_minutes = EXCLUDED.regular_minutes,
+                    overtime_minutes = EXCLUDED.overtime_minutes,
+                    deficit_minutes = EXCLUDED.deficit_minutes,
+                    status = EXCLUDED.status,
+                    updated_at = NOW()
+            """, (employee_id, logical_date, schedule['id'], first_in, last_out, regular_mins, overtime_mins, deficit_mins, status))
         
         return True
         

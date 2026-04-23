@@ -6,7 +6,7 @@ import {
   Search,
   X
 } from 'lucide-react';
-import { getBuildings, createBuilding } from '../services/api';
+import { getBuildings, createBuilding, getPairingCode } from '../services/api';
 import './Buildings.css';
 
 const Buildings = () => {
@@ -16,6 +16,9 @@ const Buildings = () => {
   const [formData, setFormData] = useState({ name: '', address: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
+  const [pairingCode, setPairingCode] = useState(null);
+  const [showPairingModal, setShowPairingModal] = useState(false);
+  const [selectedBuilding, setSelectedBuilding] = useState(null);
 
   useEffect(() => {
     fetchBuildings();
@@ -47,6 +50,17 @@ const Buildings = () => {
       alert('Error al crear la sede');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleGetPairingCode = async (building) => {
+    setSelectedBuilding(building);
+    try {
+      const response = await getPairingCode(building.id);
+      setPairingCode(response.data.code);
+      setShowPairingModal(true);
+    } catch (error) {
+      alert('Error al generar código de emparejamiento');
     }
   };
 
@@ -107,7 +121,12 @@ const Buildings = () => {
                       </div>
                     </td>
                     <td>
-                      <button className="text-btn">Editar</button>
+                      <div className="table-actions">
+                        <button className="text-btn" style={{ marginRight: '12px' }}>Editar</button>
+                        <button className="pair-btn" onClick={() => handleGetPairingCode(building)}>
+                          Vincular Kiosco
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -161,6 +180,41 @@ const Buildings = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {showPairingModal && (
+        <div className="modal-overlay">
+          <div className="modal-content pairing-modal">
+            <div className="modal-header">
+              <h2>Vincular Nuevo Kiosco</h2>
+              <button className="close-btn" onClick={() => setShowPairingModal(false)}>
+                <X size={24} />
+              </button>
+            </div>
+            <div className="pairing-body" style={{ textAlign: 'center', padding: '20px 0' }}>
+              <p>Ingrese este código en la aplicación móvil para la sede: <br/> <strong>{selectedBuilding?.name}</strong></p>
+              <div className="pairing-code-display" style={{ 
+                fontSize: '48px', 
+                fontWeight: 'bold', 
+                letterSpacing: '8px', 
+                margin: '24px 0',
+                color: '#0056b3',
+                background: '#f8f9fa',
+                padding: '20px',
+                borderRadius: '12px',
+                border: '2px dashed #dee2e6'
+              }}>
+                {pairingCode}
+              </div>
+              <p style={{ color: '#6c757d', fontSize: '14px' }}>Este código expira en 15 minutos.</p>
+            </div>
+            <div className="modal-footer">
+              <button className="submit-btn" onClick={() => setShowPairingModal(false)}>
+                Entendido
+              </button>
+            </div>
           </div>
         </div>
       )}

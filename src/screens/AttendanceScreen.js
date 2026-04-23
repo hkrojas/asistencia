@@ -15,7 +15,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../theme';
 import { getDeviceToken, saveDeviceToken } from '../utils/storage';
-import { checkDeviceToken, fetchCurrentState, sendAttendance, syncOfflinePunches, getPendingSyncCount } from '../services/api';
+import { checkDeviceToken, fetchCurrentState, sendAttendance, syncOfflinePunches, getPendingSyncCount, pairDevice } from '../services/api';
 import MyTimesheetScreen from './MyTimesheetScreen';
 
 export default function AttendanceScreen() {
@@ -29,9 +29,9 @@ export default function AttendanceScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
 
-  // ── Estado del modal de administrador ──
+  // ── Estado del modal de emparejamiento ──
   const [showAdminModal, setShowAdminModal] = useState(false);
-  const [adminPin, setAdminPin] = useState('');
+  const [pairingCode, setPairingCode] = useState('');
   const [showSummary, setShowSummary] = useState(false);
 
   useEffect(() => {
@@ -92,22 +92,24 @@ export default function AttendanceScreen() {
   }
 
   async function handleAdminLink() {
-    if (adminPin === '12345') {
+    if (pairingCode.length === 6) {
       setShowAdminModal(false);
-      setAdminPin('');
       setLoading(true);
 
       try {
-        await saveDeviceToken('token-simulado-juan-perez');
-        Alert.alert('✅ Vinculado', 'Dispositivo vinculado a la red.');
+        const response = await pairDevice(pairingCode);
+        await saveDeviceToken(response.device_token);
+        
+        Alert.alert('✅ Vinculado', 'Dispositivo vinculado a la sede.');
+        setPairingCode('');
         await initializeDevice();
       } catch (error) {
-        Alert.alert('Error', 'No se pudo vincular el dispositivo.');
+        Alert.alert('Error', 'Código inválido, expirado o error de red.');
         setLoading(false);
+        setPairingCode('');
       }
     } else {
-      Alert.alert('PIN inválido', 'El PIN ingresado no es correcto.');
-      setAdminPin('');
+      Alert.alert('Código incompleto', 'Por favor ingrese los 6 dígitos del código.');
     }
   }
 
@@ -198,23 +200,23 @@ export default function AttendanceScreen() {
           visible={showAdminModal}
           transparent
           animationType="fade"
-          onRequestClose={() => { setShowAdminModal(false); setAdminPin(''); }}
+          onRequestClose={() => { setShowAdminModal(false); setPairingCode(''); }}
         >
           <View style={styles.modalOverlay}>
             <View style={styles.modalCard}>
               <Ionicons name="shield-checkmark-outline" size={40} color={Colors.todayAccent} />
-              <Text style={styles.modalTitle}>Acceso de Administrador</Text>
-              <Text style={styles.modalSubtitle}>Ingrese el PIN para vincular este equipo</Text>
+              <Text style={styles.modalTitle}>Vincular Dispositivo</Text>
+              <Text style={styles.modalSubtitle}>Ingrese el código de 6 dígitos generado en el panel web</Text>
 
               <TextInput
                 style={styles.pinInput}
-                value={adminPin}
-                onChangeText={setAdminPin}
-                placeholder="PIN"
+                value={pairingCode}
+                onChangeText={setPairingCode}
+                placeholder="000000"
                 placeholderTextColor={Colors.tabInactive}
                 secureTextEntry
                 keyboardType="number-pad"
-                maxLength={10}
+                maxLength={6}
                 autoFocus
               />
 
@@ -224,7 +226,7 @@ export default function AttendanceScreen() {
 
               <TouchableOpacity
                 style={styles.cancelButton}
-                onPress={() => { setShowAdminModal(false); setAdminPin(''); }}
+                onPress={() => { setShowAdminModal(false); setPairingCode(''); }}
               >
                 <Text style={styles.cancelButtonText}>Cancelar</Text>
               </TouchableOpacity>
