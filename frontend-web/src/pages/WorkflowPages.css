@@ -1,0 +1,124 @@
+.workflow-page {
+  padding: 32px;
+  color: var(--color-navy);
+}
+
+.workflow-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.workflow-header h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.workflow-header p {
+  margin: 6px 0 0;
+  color: #607087;
+}
+
+.workflow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.workflow-btn {
+  border: 0;
+  border-radius: 8px;
+  background: var(--color-navy);
+  color: #fff;
+  font-weight: 700;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.workflow-btn.secondary {
+  background: #eef2f7;
+  color: var(--color-navy);
+}
+
+.workflow-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.metric-panel {
+  background: #fff;
+  border: 1px solid #e4e9f0;
+  border-radius: 8px;
+  padding: 18px;
+}
+
+.metric-panel span {
+  display: block;
+  color: #6b778c;
+  font-size: 13px;
+}
+
+.metric-panel strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 28px;
+}
+
+.workflow-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  border: 1px solid #e4e9f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.workflow-table th,
+.workflow-table td {
+  text-align: left;
+  padding: 13px 14px;
+  border-bottom: 1px solid #edf1f5;
+  font-size: 14px;
+}
+
+.workflow-table th {
+  background: #f7f9fc;
+  color: #53627a;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.workflow-status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: #eef2f7;
+  color: var(--color-navy);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workflow-status.warn {
+  background: #fff5dd;
+  color: #8a5a00;
+}
+
+.workflow-status.ok {
+  background: #e8f8ef;
+  color: #17683a;
+}
+
+.workflow-empty {
+  padding: 28px;
+  background: #fff;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  color: #607087;
+}
+

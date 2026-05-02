@@ -63,10 +63,12 @@ def create_app():
     from routes.attendance import attendance_bp
     from routes.schedules import schedules_bp
     from routes.admin import admin_bp
+    from routes.operations import operations_bp
     app.register_blueprint(devices_bp, url_prefix='/v1')
     app.register_blueprint(attendance_bp, url_prefix='/v1')
     app.register_blueprint(schedules_bp, url_prefix='/v1')
     app.register_blueprint(admin_bp, url_prefix='/v1')
+    app.register_blueprint(operations_bp, url_prefix='/v1')
 
     return app
 

@@ -223,16 +223,16 @@ def register_attendance():
             cur.execute(
                 """
                 INSERT INTO raw_punches (
-                    employee_id, device_id, punch_time, punch_type,
+                    employee_id, device_id, building_id, punch_time, punch_type,
                     confidence_score, biometric_status, biometric_provider,
                     offline_sync, client_uuid
                 )
-                VALUES (%s, %s, COALESCE(%s, NOW()), %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, COALESCE(%s, NOW()), %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (client_uuid) DO UPDATE SET created_at = EXCLUDED.created_at
                 RETURNING id, punch_type, punch_time
                 """,
                 (
-                    employee_id, device['device_id'], punch_time, punch_type,
+                    employee_id, device['device_id'], device.get('building_id'), punch_time, punch_type,
                     confidence, bio_status, bio_provider,
                     offline_sync, client_uuid
                 )

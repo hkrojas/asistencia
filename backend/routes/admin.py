@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, Response, request
+from flask import Blueprint, jsonify, Response, request, g
 import os
 import jwt
 import csv
@@ -27,7 +27,7 @@ def require_auth(f):
             return jsonify({'error': 'Acceso denegado. Token no proporcionado.'}), 401
         
         try:
-            jwt.decode(token, os.getenv('JWT_SECRET_KEY', 'super-secret'), algorithms=["HS256"])
+            g.current_user = jwt.decode(token, os.getenv('JWT_SECRET_KEY', 'super-secret'), algorithms=["HS256"])
         except jwt.ExpiredSignatureError:
             return jsonify({'error': 'Sesión expirada. Por favor inicie sesión de nuevo.'}), 401
         except Exception:
@@ -92,7 +92,7 @@ def get_admin_attendance():
             FROM raw_punches rp
             JOIN employees e ON e.id = rp.employee_id
             LEFT JOIN devices d ON d.id = rp.device_id
-            LEFT JOIN buildings b ON b.id = COALESCE(d.building_id, e.primary_building_id)
+            LEFT JOIN buildings b ON b.id = COALESCE(rp.building_id, d.building_id, e.primary_building_id)
             ORDER BY rp.punch_time DESC
             LIMIT 50
         """)
@@ -214,12 +214,14 @@ def admin_login():
         token = jwt.encode({
             'user_id': str(user['id']),
             'username': user['username'],
+            'role': user.get('role', 'Superadmin'),
             'exp': datetime.utcnow() + timedelta(hours=8)
         }, os.getenv('JWT_SECRET_KEY', 'super-secret'), algorithm="HS256")
         
         return jsonify({
             'success': True,
             'token': token,
+            'role': user.get('role', 'Superadmin'),
             'message': 'Bienvenido al sistema'
         }), 200
         

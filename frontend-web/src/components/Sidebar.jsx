@@ -6,7 +6,12 @@ import {
   Building2, 
   LogOut,
   ShieldCheck,
-  AlertTriangle
+  AlertTriangle,
+  ClipboardList,
+  CalendarClock,
+  WalletCards,
+  CreditCard,
+  Settings
 } from 'lucide-react';
 import './Sidebar.css';
 
@@ -53,6 +58,46 @@ const Sidebar = ({ onLogout }) => {
         >
           <AlertTriangle size={20} />
           <span>Monitor WFM</span>
+        </NavLink>
+
+        <NavLink
+          to="/operations"
+          className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+        >
+          <CalendarClock size={20} />
+          <span>Operación</span>
+        </NavLink>
+
+        <NavLink
+          to="/prepayroll"
+          className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+        >
+          <ClipboardList size={20} />
+          <span>Preplanilla</span>
+        </NavLink>
+
+        <NavLink
+          to="/payroll"
+          className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+        >
+          <WalletCards size={20} />
+          <span>Planilla</span>
+        </NavLink>
+
+        <NavLink
+          to="/payments"
+          className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+        >
+          <CreditCard size={20} />
+          <span>Pagos de sueldos</span>
+        </NavLink>
+
+        <NavLink
+          to="/admin"
+          className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
+        >
+          <Settings size={20} />
+          <span>Administración</span>
         </NavLink>
       </nav>
 
