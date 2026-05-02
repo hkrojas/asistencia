@@ -76,4 +76,29 @@ export const getRoles = () => api.get('/admin/roles');
 export const getEmployeeSchedule = (id) => api.get(`/admin/employees/${id}/schedule`);
 export const updateEmployeeSchedule = (id, data) => api.post(`/admin/employees/${id}/schedule`, data);
 
+// Operacion por edificios
+export const getOperationsDashboard = (periodId = null) => {
+  const params = periodId ? `?period_id=${periodId}` : '';
+  return api.get(`/admin/operations/dashboard${params}`);
+};
+export const createCoverage = (data) => api.post('/admin/coverages', data);
+export const createOperationalIncident = (data) => api.post('/admin/incidents', data);
+export const createDailyBuildingReport = (data) => api.post('/admin/daily-building-reports', data);
+
+// Preplanilla por edificio y consolidacion RRHH
+export const generateBuildingPrepayroll = (data) => api.post('/admin/building-prepayrolls/generate', data);
+export const sendBuildingPrepayroll = (id, data = {}) => api.post(`/admin/building-prepayrolls/${id}/send`, data);
+export const observeBuildingPrepayroll = (id, data) => api.post(`/admin/building-prepayrolls/${id}/observe`, data);
+export const approveBuildingPrepayroll = (id, data = {}) => api.post(`/admin/building-prepayrolls/${id}/approve`, data);
+export const getPayrollConsolidation = (periodId) => api.get(`/admin/consolidation/${periodId}`);
+
+// Planilla, boletas de pago de remuneraciones y pagos de sueldos
+export const createPayrollRun = (data) => api.post('/admin/payroll-runs', data);
+export const validatePayrollHr = (id, data = {}) => api.post(`/admin/payroll-runs/${id}/validate-hr`, data);
+export const validatePayrollFinance = (id, data = {}) => api.post(`/admin/payroll-runs/${id}/validate-finance`, data);
+export const closePayrollRun = (id, data = {}) => api.post(`/admin/payroll-runs/${id}/close`, data);
+export const generatePayrollPayslips = (data) => api.post('/admin/payroll-payslips/generate', data);
+export const createSalaryPaymentBatch = (data) => api.post('/admin/salary-payment-batches', data);
+export const getAuditEvents = () => api.get('/admin/audit-events');
+
 export default api;

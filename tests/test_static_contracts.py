@@ -12,6 +12,22 @@ def read(path):
     return (ROOT / path).read_text(encoding="utf-8")
 
 
+def project_sources():
+    for path in ROOT.rglob("*"):
+        if not path.is_file():
+            continue
+        relative = path.relative_to(ROOT)
+        parts = set(relative.parts)
+        if parts & {".git", "node_modules", "dist", "__pycache__"}:
+            continue
+        if relative.parts[0] in {"docs", "tests"}:
+            continue
+        if relative.name == "AGENTS.md":
+            continue
+        if path.suffix.lower() in {".py", ".sql", ".js", ".jsx", ".md"}:
+            yield relative, path.read_text(encoding="utf-8", errors="ignore")
+
+
 class StaticContractTests(unittest.TestCase):
     def test_admin_routes_compile(self):
         source = read("backend/routes/admin.py")
@@ -147,7 +163,56 @@ class StaticContractTests(unittest.TestCase):
     def test_recent_attendance_uses_device_building_when_available(self):
         source = read("backend/routes/admin.py")
         self.assertIn("LEFT JOIN devices d ON d.id = rp.device_id", source)
-        self.assertIn("COALESCE(d.building_id, e.primary_building_id)", source)
+        self.assertIn("COALESCE(rp.building_id, d.building_id, e.primary_building_id)", source)
+
+    def test_no_commercial_invoicing_terms_outside_docs_and_guard_tests(self):
+        forbidden_terms = [
+            "invoice",
+            "sales_invoice",
+            "tax_invoice",
+            "billing",
+            "factura",
+            "comprobante",
+            "boleta de venta",
+            "igv",
+            "credit_note",
+            "debit_note",
+            "invoice_series",
+            "sunat_ticket",
+            "cdr",
+        ]
+        violations = []
+        for relative, content in project_sources():
+            lower = content.lower()
+            for term in forbidden_terms:
+                if term in lower:
+                    violations.append(f"{relative}: {term}")
+
+        self.assertEqual([], violations)
+
+    def test_no_commercial_invoice_routes_or_schema_tables_exist(self):
+        sources = "\n".join(content.lower() for _, content in project_sources())
+        forbidden_fragments = [
+            "/invoices",
+            "/billing",
+            "/facturas",
+            "/comprobantes",
+            "/sunat",
+            "create table invoices",
+            "create table sales_invoices",
+            "create table tax_invoices",
+            "create table invoice_series",
+        ]
+
+        for fragment in forbidden_fragments:
+            self.assertNotIn(fragment, sources)
+
+    def test_no_invoicing_scope_document_exists(self):
+        doc = read("docs/alcance_no_facturacion.md")
+        self.assertIn("Este proyecto no emite facturas electronicas de venta.", doc)
+        self.assertIn("El sistema si genera boletas de pago de remuneraciones.", doc)
+        self.assertIn("El sistema si genera lotes de pago de sueldos.", doc)
+        self.assertIn("El sistema si genera reportes de costo laboral por edificio.", doc)
 
 
 if __name__ == "__main__":

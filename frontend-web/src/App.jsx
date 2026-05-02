@@ -5,6 +5,11 @@ import Login from './pages/Login';
 import Employees from './pages/Employees';
 import Buildings from './pages/Buildings';
 import WfmManager from './pages/WfmManager';
+import Operations from './pages/Operations';
+import Prepayroll from './pages/Prepayroll';
+import Payroll from './pages/Payroll';
+import Payments from './pages/Payments';
+import SystemAdmin from './pages/SystemAdmin';
 import AdminLayout from './components/AdminLayout';
 
 function App() {
@@ -42,6 +47,11 @@ function App() {
           <Route path="employees" element={<Employees />} />
           <Route path="buildings" element={<Buildings />} />
           <Route path="wfm" element={<WfmManager />} />
+          <Route path="operations" element={<Operations />} />
+          <Route path="prepayroll" element={<Prepayroll />} />
+          <Route path="payroll" element={<Payroll />} />
+          <Route path="payments" element={<Payments />} />
+          <Route path="admin" element={<SystemAdmin />} />
         </Route>
 
         {/* Catch all - Redirect to dashboard */}
