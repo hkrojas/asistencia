@@ -4,13 +4,36 @@ import {
   Clock, 
   CheckCircle2, 
   ChevronRight, 
-  Filter,
   RefreshCw,
   Search
 } from 'lucide-react';
 import { getWfmIssues, resolveWfmIssue } from '../services/api';
 import ResolveModal from './ResolveModal';
 import './WfmManager.css';
+
+const normalizeAnomalyFlags = (flags) => {
+  if (Array.isArray(flags)) {
+    return flags;
+  }
+
+  if (!flags) {
+    return [];
+  }
+
+  if (typeof flags !== 'string') {
+    return [String(flags)];
+  }
+
+  try {
+    const parsed = JSON.parse(flags);
+    if (Array.isArray(parsed)) {
+      return parsed;
+    }
+    return parsed ? [String(parsed)] : [];
+  } catch {
+    return [flags];
+  }
+};
 
 const WfmManager = () => {
   const [issues, setIssues] = useState([]);
@@ -31,7 +54,28 @@ const WfmManager = () => {
   };
 
   useEffect(() => {
-    fetchIssues();
+    let cancelled = false;
+
+    const loadInitialIssues = async () => {
+      try {
+        const response = await getWfmIssues();
+        if (!cancelled) {
+          setIssues(response.data);
+        }
+      } catch (error) {
+        console.error('Error fetching WFM issues:', error);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadInitialIssues();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleResolve = async (id, data) => {
@@ -103,8 +147,8 @@ const WfmManager = () => {
               </thead>
               <tbody>
                 {filteredIssues.map(issue => {
-                  const isOrphan = issue.anomaly_flags?.includes('orphan_in') || issue.anomaly_flags?.includes('orphan_out');
-                  const isOvertime = issue.overtime_minutes > 0;
+                  const anomalyFlags = normalizeAnomalyFlags(issue.anomaly_flags);
+                  const isOrphan = anomalyFlags.includes('orphan_in') || anomalyFlags.includes('orphan_out');
                   
                   return (
                     <tr key={issue.id} className={isOrphan ? 'row-critical' : 'row-warning'}>
@@ -121,9 +165,9 @@ const WfmManager = () => {
                             {isOrphan ? "Marcación Incompleta" : "Extra por Aprobar"}
                           </span>
                         </div>
-                        {issue.anomaly_flags && issue.anomaly_flags.length > 0 && (
+                        {anomalyFlags.length > 0 && (
                           <div className="anomaly-tags">
-                            {JSON.parse(issue.anomaly_flags).map(flag => (
+                            {anomalyFlags.map(flag => (
                               <span key={flag} className="flag-tag">{flag}</span>
                             ))}
                           </div>
@@ -155,6 +199,7 @@ const WfmManager = () => {
 
       {selectedIssue && (
         <ResolveModal 
+          key={selectedIssue.id}
           issue={selectedIssue} 
           onClose={() => setSelectedIssue(null)}
           onResolve={handleResolve}

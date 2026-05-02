@@ -11,11 +11,18 @@ DROP TABLE IF EXISTS daily_timesheets CASCADE;
 DROP TABLE IF EXISTS time_exceptions CASCADE;
 DROP TABLE IF EXISTS raw_punches CASCADE;
 DROP TABLE IF EXISTS attendance_logs CASCADE; -- Deprecated
+DROP TABLE IF EXISTS leaves CASCADE;
+DROP TABLE IF EXISTS compensation_rates CASCADE;
+DROP TABLE IF EXISTS schedule_assignments CASCADE;
+DROP TABLE IF EXISTS device_pairing_codes CASCADE;
+DROP TABLE IF EXISTS payroll_periods CASCADE;
 DROP TABLE IF EXISTS schedules CASCADE;
+DROP TABLE IF EXISTS system_users CASCADE;
 DROP TABLE IF EXISTS devices CASCADE;
 DROP TABLE IF EXISTS employees CASCADE;
 DROP TABLE IF EXISTS roles CASCADE;
 DROP TABLE IF EXISTS buildings CASCADE;
+DROP TYPE IF EXISTS timesheet_status CASCADE;
 
 -- ──────────────────────────────────────────────────────────────
 -- 1. buildings — Sedes o establecimientos
@@ -25,6 +32,15 @@ CREATE TABLE buildings (
     name            VARCHAR(100) NOT NULL,
     address         VARCHAR(255),
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE device_pairing_codes (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    code_hash   VARCHAR(255) NOT NULL,
+    building_id UUID NOT NULL REFERENCES buildings(id) ON DELETE CASCADE,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    is_used     BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- ──────────────────────────────────────────────────────────────
@@ -56,8 +72,9 @@ CREATE TABLE employees (
 -- ──────────────────────────────────────────────────────────────
 CREATE TABLE devices (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    device_token    VARCHAR(255) NOT NULL UNIQUE,
-    employee_id     UUID         NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    token_hash      VARCHAR(255) NOT NULL UNIQUE,
+    employee_id     UUID         REFERENCES employees(id) ON DELETE CASCADE,
+    building_id     UUID         REFERENCES buildings(id) ON DELETE CASCADE,
     alias           VARCHAR(100),
     is_active       BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
@@ -104,6 +121,17 @@ CREATE TABLE leaves (
     is_paid             BOOLEAN      DEFAULT TRUE,
     created_at          TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     UNIQUE (employee_id, logical_date)
+);
+
+CREATE TABLE payroll_periods (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name        VARCHAR(100) NOT NULL,
+    starts_on   DATE NOT NULL,
+    ends_on     DATE NOT NULL,
+    state       VARCHAR(20) DEFAULT 'open' CHECK (state IN ('open', 'closed')),
+    closed_at   TIMESTAMPTZ,
+    closed_by   UUID,
+    created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ──────────────────────────────────────────────────────────────
@@ -169,24 +197,10 @@ CREATE TABLE audit_logs (
 );
 
 -- ──────────────────────────────────────────────────────────────
--- 9. payroll_periods — Ciclos de Nómina y Bloqueo
--- ──────────────────────────────────────────────────────────────
-CREATE TABLE payroll_periods (
-    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name        VARCHAR(100) NOT NULL,
-    starts_on   DATE NOT NULL,
-    ends_on     DATE NOT NULL,
-    state       VARCHAR(20) DEFAULT 'open' CHECK (state IN ('open', 'closed')),
-    closed_at   TIMESTAMPTZ,
-    closed_by   UUID,
-    created_at  TIMESTAMPTZ DEFAULT NOW()
-);
-
--- ──────────────────────────────────────────────────────────────
 -- 10. system_users — Autenticación del Panel
 -- ──────────────────────────────────────────────────────────────
 CREATE TABLE system_users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     username VARCHAR(50) UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     is_active BOOLEAN DEFAULT TRUE,
@@ -233,11 +247,12 @@ VALUES ('a1b2c3d4-0000-0000-0000-000000000002', 'Admin RRHH', 'Gerente de Compen
         '00000000-0000-0000-0000-000000000003', 'e0e0e0e0-0000-0000-0000-000000000001');
 
 -- Devices
-INSERT INTO devices (id, device_token, employee_id, alias)
+INSERT INTO devices (id, token_hash, employee_id, building_id, alias)
 VALUES (
     'b1b2c3d4-0000-0000-0000-000000000001',
-    'token-simulado-juan-perez',
+    '8d5d7ce148c85f5433cf2d4f3d3d8ce0ba776bb28bf2be43d0debd0e5be21c8b',
     'a1b2c3d4-0000-0000-0000-000000000001',
+    'e0e0e0e0-0000-0000-0000-000000000001',
     'Tablet de Juan'
 );
 

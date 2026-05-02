@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import {
-  Download,
   Clock,
   Users,
   CalendarDays,
@@ -11,6 +10,10 @@ import {
   Lock,
   Unlock,
   FileText,
+  RotateCw,
+  Building2,
+  UserX,
+  PlayCircle,
 } from 'lucide-react';
 import { 
   getAdminStats, 
@@ -18,7 +21,8 @@ import {
   downloadAttendanceReport, 
   processTimesheets,
   getPayrollPeriods,
-  closePayrollPeriod 
+  closePayrollPeriod,
+  getWfmIssues,
 } from '../services/api';
 import ExceptionsManager from '../components/ExceptionsManager';
 import './Dashboard.css';
@@ -33,6 +37,7 @@ export default function Dashboard() {
   });
   const [periods, setPeriods] = useState([]);
   const [selectedPeriodId, setSelectedPeriodId] = useState('');
+  const [wfmIssueCount, setWfmIssueCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [processing, setProcessing] = useState(false);
   const [error, setError] = useState(null);
@@ -40,14 +45,16 @@ export default function Dashboard() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [statsRes, attendanceRes, periodsRes] = await Promise.all([
+      const [statsRes, attendanceRes, periodsRes, wfmRes] = await Promise.all([
         getAdminStats(),
         getAdminAttendance(),
         getPayrollPeriods(),
+        getWfmIssues(),
       ]);
       setStats(statsRes.data);
       setRecords(attendanceRes.data);
       setPeriods(periodsRes.data);
+      setWfmIssueCount(wfmRes.data.length);
       
       // Auto-seleccionar el primer periodo abierto si no hay seleccion
       if (!selectedPeriodId && periodsRes.data.length > 0) {
@@ -109,10 +116,48 @@ export default function Dashboard() {
   };
 
   useEffect(() => {
-    fetchData();
-    // Auto-refresh cada 30 segundos
-    const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
+    let cancelled = false;
+
+    const refreshDashboard = async () => {
+      try {
+      const [statsRes, attendanceRes, periodsRes, wfmRes] = await Promise.all([
+          getAdminStats(),
+          getAdminAttendance(),
+          getPayrollPeriods(),
+          getWfmIssues(),
+        ]);
+
+        if (cancelled) return;
+
+        setStats(statsRes.data);
+        setRecords(attendanceRes.data);
+        setPeriods(periodsRes.data);
+        setWfmIssueCount(wfmRes.data.length);
+
+        if (periodsRes.data.length > 0) {
+          const active = periodsRes.data.find(p => p.state === 'open') || periodsRes.data[0];
+          setSelectedPeriodId(current => current || active.id);
+        }
+
+        setError(null);
+      } catch (err) {
+        console.error('Error fetching dashboard data:', err);
+        if (!cancelled) {
+          setError('No se pudo conectar con el servidor. Verifica que el backend estÃ© corriendo.');
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    refreshDashboard();
+    const interval = setInterval(refreshDashboard, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   const formatDate = (isoString) => {
@@ -141,6 +186,11 @@ export default function Dashboard() {
       </div>
     );
   }
+
+  const selectedPeriod = periods.find(p => p.id === selectedPeriodId);
+  const hasBlockingWfmIssues = wfmIssueCount > 0;
+  const closePeriodDisabled =
+    processing || selectedPeriod?.state === 'closed' || hasBlockingWfmIssues;
 
   return (
     <div className="dashboard">
@@ -173,15 +223,27 @@ export default function Dashboard() {
           </div>
 
           <button 
-            className={`btn-lock ${periods.find(p => p.id === selectedPeriodId)?.state === 'closed' ? 'locked' : ''}`}
+            className={`btn-lock ${selectedPeriod?.state === 'closed' ? 'locked' : ''}`}
             onClick={handleClosePeriod}
-            disabled={processing || periods.find(p => p.id === selectedPeriodId)?.state === 'closed'}
+            disabled={closePeriodDisabled}
+            title={hasBlockingWfmIssues ? `${wfmIssueCount} incidencia(s) WFM pendiente(s)` : undefined}
           >
-            {periods.find(p => p.id === selectedPeriodId)?.state === 'closed' ? (
+            {selectedPeriod?.state === 'closed' ? (
               <><Lock size={18} /> Periodo Cerrado</>
+            ) : hasBlockingWfmIssues ? (
+              <><AlertTriangle size={18} /> Resolver Incidencias</>
             ) : (
               <><Unlock size={18} /> Cerrar Periodo</>
             )}
+          </button>
+
+          <button
+            className="btn-export"
+            onClick={handleProcessTimesheets}
+            disabled={processing || !selectedPeriodId}
+          >
+            <PlayCircle size={18} />
+            Procesar Jornadas
           </button>
 
           <button className="btn-export" onClick={handleExport}>
@@ -274,8 +336,8 @@ export default function Dashboard() {
                     <td className="cell-name">{r.employee}</td>
                     <td>{r.building}</td>
                     <td>
-                      <span className={`badge ${r.action === 'check_in' ? 'badge-success' : 'badge-warning'}`}>
-                        {r.action === 'check_in' ? (
+                      <span className={`badge ${r.action === 'in' ? 'badge-success' : 'badge-warning'}`}>
+                        {r.action === 'in' ? (
                           <><CheckCircle2 size={13} /> Entrada</>
                         ) : (
                           <><Clock size={13} /> Salida</>

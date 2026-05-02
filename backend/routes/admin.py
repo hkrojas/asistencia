@@ -47,16 +47,28 @@ def get_admin_stats():
                 (SELECT COUNT(DISTINCT employee_id) FROM raw_punches 
                  WHERE punch_time::date = CURRENT_DATE 
                  AND punch_type = 'in') as present_today,
-                (SELECT COUNT(*) FROM buildings) as total_buildings
+                (SELECT COUNT(*) FROM buildings) as total_buildings,
+                (
+                    SELECT COALESCE(
+                        ROUND(
+                            100.0 * COUNT(*) FILTER (
+                                WHERE dt.status IN ('perfect', 'resolved')
+                                  AND dt.deficit_minutes = 0
+                            ) / NULLIF(COUNT(*), 0)
+                        ),
+                        0
+                    )::int
+                    FROM daily_timesheets dt
+                    JOIN payroll_periods pp ON pp.id = dt.payroll_period_id
+                    WHERE pp.state = 'open'
+                ) as avg_punctuality
         """)
-        
-        # Simulación de métrica de puntualidad o promedio si se requiere
-        # Por ahora enviamos las 3 bases solicitadas
+
         return jsonify({
             'active_employees': stats['active_employees'],
             'present_today': stats['present_today'],
             'total_buildings': stats['total_buildings'],
-            'avg_punctuality': 94 # Estático por ahora
+            'avg_punctuality': stats.get('avg_punctuality') or 0
         }), 200
         
     except Exception as e:
@@ -79,7 +91,8 @@ def get_admin_attendance():
                 rp.biometric_status
             FROM raw_punches rp
             JOIN employees e ON e.id = rp.employee_id
-            LEFT JOIN buildings b ON b.id = e.primary_building_id
+            LEFT JOIN devices d ON d.id = rp.device_id
+            LEFT JOIN buildings b ON b.id = COALESCE(d.building_id, e.primary_building_id)
             ORDER BY rp.punch_time DESC
             LIMIT 50
         """)
@@ -122,7 +135,11 @@ def get_pending_exceptions():
                 EXTRACT(EPOCH FROM (rp.punch_time::time - s.end_time))/60 AS excess_minutes
             FROM raw_punches rp
             JOIN employees e ON e.id = rp.employee_id
-            JOIN schedules s ON s.employee_id = e.id AND s.day_of_week = EXTRACT(DOW FROM rp.punch_time)
+            JOIN schedule_assignments s
+              ON s.employee_id = e.id
+             AND s.day_of_week = (EXTRACT(ISODOW FROM rp.punch_time)::int - 1)
+             AND rp.punch_time::date >= s.valid_from
+             AND (rp.punch_time::date <= s.valid_to OR s.valid_to IS NULL)
             LEFT JOIN time_exceptions te ON te.employee_id = e.id AND te.date = rp.punch_time::date
             WHERE rp.punch_type = 'out'
             AND te.id IS NULL
@@ -175,8 +192,10 @@ def resolve_exception():
                 INSERT INTO time_exceptions (employee_id, date, exception_type, minutes_adjusted, approved_by, reason)
                 VALUES (%s, %s, %s, %s, %s, %s)
             """, (log_data['employee_id'], log_data['punch_time'], res_type, minutes, admin_id, 'Resolución desde Panel Web'))
+
+        process_timesheet(log_data['employee_id'], log_data['punch_time'])
         
-        return jsonify({'message': 'Resolución registrada con éxito'}), 200
+        return jsonify({'message': 'Resolución registrada y jornada recalculada con éxito'}), 200
         
     except Exception as e:
         print(f'[admin] Error en resolve_exception: {e}')
@@ -211,6 +230,7 @@ def admin_login():
 def export_attendance_csv():
     """Genera y descarga un reporte CSV basado en jornadas procesadas."""
     try:
+        period_id = request.args.get('period_id')
         query = """
             SELECT 
                 e.full_name, b.name AS building,
@@ -415,8 +435,10 @@ def manage_employee_schedule(employee_id):
                 tol = day.get('tolerance_minutes', 15)
                 active = day.get('active', True)
                 
-                if not active:
-                    # Si no es día laboral, eliminar si existe
+                if active and (not start or not end):
+                    return jsonify({'error': 'start_time y end_time son obligatorios para dÃ­as activos'}), 400
+
+                # Day-level deactivation is handled after fetching the active row.
                 with tx() as (conn, cur):
                     # Buscamos si ya existe un registro vigente idéntico
                     cur.execute("""
@@ -425,6 +447,15 @@ def manage_employee_schedule(employee_id):
                         WHERE employee_id = %s AND day_of_week = %s AND valid_to IS NULL
                     """, (employee_id, day_num))
                     existing = cur.fetchone()
+
+                    if not active:
+                        if existing:
+                            cur.execute("""
+                                UPDATE schedule_assignments
+                                SET valid_to = %s
+                                WHERE id = %s
+                            """, (date.today() - timedelta(days=1), existing['id']))
+                        continue
 
                     # Lógica de Versiones (SCD Tipo 2)
                     if existing:
@@ -503,13 +534,32 @@ def process_all_timesheets():
     try:
         data = request.json or {}
         # Default: últimos 7 días
-        end_date = date.today()
-        start_date = end_date - timedelta(days=7)
+        period_id = data.get('period_id')
+
+        if period_id:
+            period = query_one(
+                """
+                SELECT id, starts_on, ends_on, state
+                  FROM payroll_periods
+                 WHERE id = %s
+                """,
+                (period_id,)
+            )
+            if not period:
+                return jsonify({'error': 'Periodo no encontrado'}), 404
+            if period['state'] == 'closed':
+                return jsonify({'error': 'No se puede procesar un periodo cerrado'}), 400
+
+            start_date = period['starts_on']
+            end_date = period['ends_on']
+        else:
+            end_date = date.today()
+            start_date = end_date - timedelta(days=7)
         
-        if 'start_date' in data:
-            start_date = datetime.strptime(data['start_date'], '%Y-%m-%d').date()
-        if 'end_date' in data:
-            end_date = datetime.strptime(data['end_date'], '%Y-%m-%d').date()
+            if 'start_date' in data:
+                start_date = datetime.strptime(data['start_date'], '%Y-%m-%d').date()
+            if 'end_date' in data:
+                end_date = datetime.strptime(data['end_date'], '%Y-%m-%d').date()
             
         # Obtener empleados activos
         active_employees = query_all("SELECT id FROM employees WHERE status = 'active'")
@@ -596,7 +646,33 @@ def manage_payroll_periods():
 def close_payroll_period(period_id):
     """Cierra el periodo y bloquea todos los timesheets asociados."""
     try:
-        # 1. Marcar el periodo como cerrado
+        period = query_one(
+            "SELECT id, state FROM payroll_periods WHERE id = %s",
+            (period_id,)
+        )
+        if not period:
+            return jsonify({'error': 'Periodo no encontrado'}), 404
+        if period['state'] == 'closed':
+            return jsonify({'error': 'El periodo ya esta cerrado'}), 400
+
+        unresolved = query_one("""
+            SELECT COUNT(*) AS unresolved_count
+              FROM daily_timesheets
+             WHERE payroll_period_id = %s
+               AND status <> 'resolved'
+               AND (
+                    status IN ('incomplete', 'exception')
+                    OR (anomaly_flags IS NOT NULL AND anomaly_flags <> '[]'::jsonb)
+                    OR overtime_minutes > 0
+               )
+        """, (period_id,))
+        unresolved_count = int(unresolved['unresolved_count'] or 0) if unresolved else 0
+        if unresolved_count > 0:
+            return jsonify({
+                'error': 'No se puede cerrar un periodo con incidencias WFM pendientes',
+                'unresolved_count': unresolved_count
+            }), 409
+
         with tx() as (conn, cur):
             cur.execute("""
                 UPDATE payroll_periods 
@@ -629,6 +705,7 @@ def get_wfm_issues():
             JOIN employees e ON e.id = dt.employee_id
             JOIN payroll_periods pp ON pp.id = dt.payroll_period_id
             WHERE pp.state = 'open'
+            AND dt.status <> 'resolved'
             AND (
                 dt.status IN ('incomplete', 'exception') 
                 OR (dt.anomaly_flags IS NOT NULL AND dt.anomaly_flags <> '[]'::jsonb)
@@ -656,6 +733,10 @@ def resolve_wfm_issue(timesheet_id):
     action = data.get('action') # 'manual_in', 'manual_out'
     time_str = data.get('time') # 'HH:MM'
     reason = data.get('reason')
+    if action not in ('manual_in', 'manual_out'):
+        return jsonify({'error': 'Accion correctiva invalida'}), 400
+    if not time_str or not reason:
+        return jsonify({'error': 'Hora y justificacion son obligatorias'}), 400
     
     try:
         # 1. Obtener datos básicos del timesheet
@@ -676,6 +757,18 @@ def resolve_wfm_issue(timesheet_id):
                 INSERT INTO raw_punches (employee_id, punch_time, punch_type, ingest_status, biometric_status)
                 VALUES (%s, %s, %s, 'accepted', 'bypassed')
             """, (ts['employee_id'], punch_time, punch_type))
+
+            cur.execute("""
+                INSERT INTO time_exceptions (
+                    employee_id, date, exception_type, minutes_adjusted, approved_by, reason
+                )
+                VALUES (%s, %s, 'manual_punch', 0, %s, %s)
+            """, (
+                ts['employee_id'],
+                ts['logical_date'],
+                data.get('adminId', 'a1b2c3d4-0000-0000-0000-000000000002'),
+                reason
+            ))
             
         # 3. Recalcular
         process_timesheet(ts['employee_id'], ts['logical_date'])

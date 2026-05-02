@@ -6,6 +6,12 @@ from dotenv import load_dotenv
 # ── Cargar variables de entorno (.env) ──
 load_dotenv()
 
+
+def _csv_env(name, default_values):
+    raw_value = os.getenv(name, "")
+    values = [value.strip() for value in raw_value.split(",") if value.strip()]
+    return values or default_values
+
 def create_app():
     """Application factory pattern."""
     app = Flask(__name__)
@@ -17,10 +23,18 @@ def create_app():
     )
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
     app.config['JWT_SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'super-secret-key-12345')
+    admin_cors_origins = _csv_env('ADMIN_CORS_ORIGINS', [
+        'http://localhost:3000',
+        'http://127.0.0.1:3000',
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+        'http://localhost:5174',
+        'http://127.0.0.1:5174',
+    ])
 
     # ── CORS — Restringido por rutas para mayor seguridad ──
     CORS(app, resources={
-        r"/v1/admin/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000"]},
+        r"/v1/admin/*": {"origins": admin_cors_origins},
         r"/v1/attendance/*": {"origins": "*"},
         r"/v1/devices/*": {"origins": "*"},
         r"/v1/schedules/*": {"origins": "*"},

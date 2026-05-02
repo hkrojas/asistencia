@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import Dashboard from './pages/Dashboard';
 import Login from './pages/Login';
@@ -8,16 +8,7 @@ import WfmManager from './pages/WfmManager';
 import AdminLayout from './components/AdminLayout';
 
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const token = localStorage.getItem('admin_token');
-    if (token) {
-      setIsAuthenticated(true);
-    }
-    setLoading(false);
-  }, []);
+  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem('admin_token')));
 
   const handleLoginSuccess = (token) => {
     localStorage.setItem('admin_token', token);
@@ -28,8 +19,6 @@ function App() {
     localStorage.removeItem('admin_token');
     setIsAuthenticated(false);
   };
-
-  if (loading) return null;
 
   return (
     <BrowserRouter>

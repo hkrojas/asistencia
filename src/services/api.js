@@ -11,6 +11,10 @@ const BASE_URL = Platform.select({
 
 const OFFLINE_PUNCHES_KEY = 'offline_punches';
 
+function employeeQuery(employeeId) {
+  return employeeId ? `?employee_id=${encodeURIComponent(employeeId)}` : '';
+}
+
 /**
  * Helper interno para hacer peticiones fetch con headers comunes.
  */
@@ -40,7 +44,7 @@ async function request(endpoint, options = {}) {
  * Envía el registro de asistencia con la foto capturada.
  * Soporta Offline-First: si falla la red, guarda localmente.
  */
-export async function sendAttendance(photoBase64, actionType, deviceToken) {
+export async function sendAttendance(photoBase64, actionType, deviceToken, employeeId = null) {
   const clientUuid = uuid.v4();
   const punchTime = new Date().toISOString();
 
@@ -49,6 +53,7 @@ export async function sendAttendance(photoBase64, actionType, deviceToken) {
     photo: photoBase64,
     client_uuid: clientUuid,
     punch_time: punchTime,
+    ...(employeeId ? { employee_id: employeeId } : {}),
   };
 
   try {
@@ -164,11 +169,24 @@ export async function pairDevice(pairingCode) {
 }
 
 /**
+ * Lista empleados disponibles para un kiosco compartido.
+ */
+export async function fetchKioskEmployees(deviceToken) {
+  try {
+    return await request('/attendance/employees', {
+      headers: { 'X-Device-Token': deviceToken },
+    });
+  } catch (error) {
+    return { employees: [], error: 'Offline' };
+  }
+}
+
+/**
  * Consulta el estado actual del trabajador.
  */
-export async function fetchCurrentState(deviceToken) {
+export async function fetchCurrentState(deviceToken, employeeId = null) {
   try {
-    return await request('/attendance/state', {
+    return await request(`/attendance/state${employeeQuery(employeeId)}`, {
       headers: { 'X-Device-Token': deviceToken },
     });
   } catch (error) {
@@ -191,9 +209,9 @@ export async function fetchWeeklySchedule(deviceToken) {
 /**
  * Obtiene el resumen semanal del empleado (transparencia).
  */
-export async function getEmployeeSummary(deviceToken) {
+export async function getEmployeeSummary(deviceToken, employeeId = null) {
   try {
-    return await request('/attendance/summary', {
+    return await request(`/attendance/summary${employeeQuery(employeeId)}`, {
       headers: { 'X-Device-Token': deviceToken },
     });
   } catch (error) {

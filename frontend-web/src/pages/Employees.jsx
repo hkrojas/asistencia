@@ -38,10 +38,6 @@ const Employees = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -82,15 +78,53 @@ const Employees = () => {
       });
       fetchData();
     } catch (error) {
+      console.error('Error creating employee:', error);
       alert('Error al crear el empleado');
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadInitialData = async () => {
+      try {
+        const [empRes, buildRes, roleRes] = await Promise.all([
+          getEmployees(),
+          getBuildings(),
+          getRoles()
+        ]);
+
+        if (cancelled) return;
+
+        setEmployees(empRes.data);
+        setBuildings(buildRes.data);
+        setRoles(roleRes.data);
+
+        if (roleRes.data.length > 0) {
+          const workerRole = roleRes.data.find(r => r.name.toLowerCase() === 'worker');
+          setFormData(prev => ({...prev, role_id: workerRole ? workerRole.id : roleRes.data[0].id}));
+        }
+      } catch (error) {
+        console.error('Error fetching data:', error);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadInitialData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const filteredEmployees = employees.filter(e => 
     e.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    e.job_title.toLowerCase().includes(searchTerm.toLowerCase())
+    e.job_title?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (

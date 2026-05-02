@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { AlertCircle, Clock, CheckCircle, TimerReset, Loader2 } from 'lucide-react';
+import { AlertCircle, CheckCircle, TimerReset, Loader2 } from 'lucide-react';
 import { resolveException, getPendingExceptions } from '../services/api';
 import './ExceptionsManager.css';
 
@@ -7,22 +7,30 @@ export default function ExceptionsManager() {
   const [exceptions, setExceptions] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchExceptions = async () => {
-    try {
-      const { data } = await getPendingExceptions();
-      setExceptions(data);
-    } catch (err) {
-      console.error('Error fetching exceptions:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
+    let cancelled = false;
+
+    const fetchExceptions = async () => {
+      try {
+        const { data } = await getPendingExceptions();
+        if (!cancelled) {
+          setExceptions(data);
+        }
+      } catch (err) {
+        console.error('Error fetching exceptions:', err);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
     fetchExceptions();
-    // Auto-refresh cada 60 segundos para incidencias nuevas
     const interval = setInterval(fetchExceptions, 60000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   const handleResolve = async (id, type) => {
@@ -84,7 +92,7 @@ export default function ExceptionsManager() {
                       </button>
                       <button 
                         className="btn-action btn-compensate"
-                        onClick={() => handleResolve(ex.id, 'compensate')}
+                        onClick={() => handleResolve(ex.id, 'leave_early')}
                         title="Compensar Tiempo"
                       >
                         <TimerReset size={14} />

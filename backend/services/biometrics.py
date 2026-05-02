@@ -1,19 +1,19 @@
-import os
-import boto3
 import base64
-from botocore.exceptions import NoCredentialsError
+import binascii
+import os
 
-import os
 import boto3
-import base64
-from botocore.exceptions import NoCredentialsError
+from botocore.exceptions import BotoCoreError, ClientError
+
+from utils.db import query_one
 
 def verify_face(photo_base64, employee_id):
     """
-    Valida el rostro del empleado usando AWS Rekognition.
-    Implementa degradación controlada: no simula éxito si falla el motor.
+    Valida el rostro del empleado.
+
+    BIOMETRIC_MODE=bypass permite desarrollo local y queda auditado como
+    biometric_status=bypassed. BIOMETRIC_MODE=aws exige Rekognition real.
     """
-    # 1. Validación de entrada
     if not photo_base64:
         return {
             "match": False,
@@ -22,22 +22,58 @@ def verify_face(photo_base64, employee_id):
             "error": "No se proporcionó imagen para validación"
         }
 
-    aws_key = os.getenv('AWS_ACCESS_KEY_ID')
-    aws_secret = os.getenv('AWS_SECRET_ACCESS_KEY')
-    region = os.getenv('AWS_REGION', 'us-east-1')
+    mode = os.getenv("BIOMETRIC_MODE", "aws").strip().lower()
+    if mode in ("bypass", "dev", "local", "disabled"):
+        return {
+            "match": True,
+            "status": "bypassed",
+            "confidence": 0.0,
+            "provider": "local_bypass"
+        }
 
-    # 2. Manejo de Credenciales (Degradación)
-    if not aws_key or not aws_secret:
-        print("[Biometrics] Degradación: AWS Keys no detectadas. Marcación marcada como 'unavailable'.")
+    if mode not in ("aws", "rekognition", "strict"):
         return {
             "match": False,
             "status": "unavailable",
             "confidence": 0.0,
-            "provider": "none"
+            "provider": "none",
+            "error": f"BIOMETRIC_MODE no soportado: {mode}"
+        }
+
+    aws_key = os.getenv('AWS_ACCESS_KEY_ID')
+    aws_secret = os.getenv('AWS_SECRET_ACCESS_KEY')
+    region = os.getenv('AWS_REGION', 'us-east-1')
+    collection_id = os.getenv('AWS_REKOGNITION_COLLECTION_ID') or os.getenv('BIOMETRIC_COLLECTION_ID')
+    threshold = float(os.getenv('BIOMETRIC_FACE_THRESHOLD', '90'))
+
+    if not aws_key or not aws_secret or not collection_id:
+        print("[Biometrics] AWS Rekognition no configurado completamente.")
+        return {
+            "match": False,
+            "status": "unavailable",
+            "confidence": 0.0,
+            "provider": "aws_rekognition"
+        }
+
+    employee = query_one(
+        "SELECT face_id_aws FROM employees WHERE id = %s",
+        (employee_id,)
+    )
+    enrolled_face_id = employee.get("face_id_aws") if employee else None
+    if not enrolled_face_id:
+        return {
+            "match": False,
+            "status": "unavailable",
+            "confidence": 0.0,
+            "provider": "aws_rekognition",
+            "error": "Empleado sin face_id_aws enrolado"
         }
 
     try:
-        # Nota: En desarrollo local sin AWS configurado, esto lanzará excepción
+        if photo_base64.startswith("data:") and "," in photo_base64:
+            photo_base64 = photo_base64.split(",", 1)[1]
+        image_bytes = base64.b64decode(photo_base64, validate=True)
+
         client = boto3.client(
             'rekognition',
             aws_access_key_id=aws_key,
@@ -45,26 +81,48 @@ def verify_face(photo_base64, employee_id):
             region_name=region
         )
 
-        # Aquí iría la lógica real de búsqueda en colección o comparación
-        # Si no tenemos face_id_aws del empleado, no podemos comparar.
-        
-        # Simulamos una respuesta de AWS pero con el formato de STATUS real
-        # En producción, esto se reemplazaría por client.search_faces_by_image(...)
-        
-        print(f"[Biometrics] Validando rostro para empleado {employee_id} via AWS...")
-        
-        # Para propósitos de esta fase, si llegamos aquí asumimos que AWS intentaría validar.
-        # Pero si no tenemos una implementación de "search" real, lo marcamos como unavailable
-        # para no mentirle al sistema.
-        
+        response = client.search_faces_by_image(
+            CollectionId=collection_id,
+            Image={"Bytes": image_bytes},
+            FaceMatchThreshold=threshold,
+            MaxFaces=5,
+        )
+
+        matches = response.get("FaceMatches", [])
+        matching_face = next(
+            (
+                match
+                for match in matches
+                if match.get("Face", {}).get("FaceId") == enrolled_face_id
+            ),
+            None
+        )
+
+        if not matching_face:
+            confidence = max((m.get("Similarity", 0.0) for m in matches), default=0.0)
+            return {
+                "match": False,
+                "status": "failed",
+                "confidence": confidence,
+                "provider": "aws_rekognition"
+            }
+
         return {
-            "match": True, # Cambiar a False si quieres forzar fallo en pruebas
+            "match": True,
             "status": "passed",
-            "confidence": 98.5,
+            "confidence": matching_face.get("Similarity", 0.0),
             "provider": "aws_rekognition"
         }
 
-    except Exception as e:
+    except (binascii.Error, ValueError) as e:
+        return {
+            "match": False,
+            "status": "failed",
+            "confidence": 0.0,
+            "error": f"Imagen base64 invalida: {e}",
+            "provider": "aws_rekognition"
+        }
+    except (BotoCoreError, ClientError, Exception) as e:
         print(f"[Biometrics] Error en validación AWS: {e}")
         return {
             "match": False,

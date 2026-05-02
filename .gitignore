@@ -32,6 +32,11 @@ yarn-error.*
 
 # local env files
 .env*.local
+backend/.env
+
+# local agent/runtime scratch
+.agents/
+backend/scratch/
 
 # typescript
 *.tsbuildinfo
@@ -43,5 +48,4 @@ yarn-error.*
 # Python / Backend
 __pycache__/
 *.pyc
-backend/.env
 backend/venv/

@@ -3,7 +3,9 @@ import { X, Save, AlertCircle } from 'lucide-react';
 import './WfmManager.css';
 
 const ResolveModal = ({ issue, onClose, onResolve }) => {
-  const [action, setAction] = useState('manual_out');
+  const isOrphanIn = issue.anomaly_flags?.includes('orphan_in');
+  const isOrphanOut = issue.anomaly_flags?.includes('orphan_out');
+  const [action, setAction] = useState(() => (isOrphanOut ? 'manual_in' : 'manual_out'));
   const [time, setTime] = useState('');
   const [reason, setReason] = useState('');
   const [loading, setLoading] = useState(false);
@@ -14,15 +16,6 @@ const ResolveModal = ({ issue, onClose, onResolve }) => {
     await onResolve(issue.id, { action, time, reason });
     setLoading(false);
   };
-
-  const isOrphanIn = issue.anomaly_flags?.includes('orphan_in');
-  const isOrphanOut = issue.anomaly_flags?.includes('orphan_out');
-
-  // Determinar acción por defecto
-  React.useEffect(() => {
-    if (isOrphanIn) setAction('manual_out');
-    else if (isOrphanOut) setAction('manual_in');
-  }, [isOrphanIn, isOrphanOut]);
 
   return (
     <div className="modal-overlay">

@@ -49,6 +49,8 @@ def verify_device():
         return jsonify({
             'valid': True,
             'employeeName': display_name,
+            'employeeId': str(row['employee_id']) if row['employee_id'] else None,
+            'requiresEmployeeSelection': row['employee_id'] is None,
             'building': row['building_name'],
             'buildingId': str(row['building_id'])
         }), 200

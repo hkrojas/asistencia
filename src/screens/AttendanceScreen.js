@@ -10,12 +10,13 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
+  ScrollView,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Ionicons } from '@expo/vector-icons';
 import { Colors } from '../theme';
 import { getDeviceToken, saveDeviceToken } from '../utils/storage';
-import { checkDeviceToken, fetchCurrentState, sendAttendance, syncOfflinePunches, getPendingSyncCount, pairDevice } from '../services/api';
+import { checkDeviceToken, fetchCurrentState, sendAttendance, syncOfflinePunches, getPendingSyncCount, pairDevice, fetchKioskEmployees } from '../services/api';
 import MyTimesheetScreen from './MyTimesheetScreen';
 
 export default function AttendanceScreen() {
@@ -25,6 +26,9 @@ export default function AttendanceScreen() {
   const [loading, setLoading] = useState(true);
   const [linked, setLinked] = useState(false);
   const [employeeName, setEmployeeName] = useState('');
+  const [employeeOptions, setEmployeeOptions] = useState([]);
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
+  const [requiresEmployeeSelection, setRequiresEmployeeSelection] = useState(false);
   const [currentAction, setCurrentAction] = useState('check_in');
   const [isProcessing, setIsProcessing] = useState(false);
   const [pendingSyncCount, setPendingSyncCount] = useState(0);
@@ -56,6 +60,9 @@ export default function AttendanceScreen() {
 
       if (!token) {
         setLinked(false);
+        setEmployeeOptions([]);
+        setSelectedEmployeeId('');
+        setRequiresEmployeeSelection(false);
         setLoading(false);
         return;
       }
@@ -70,15 +77,40 @@ export default function AttendanceScreen() {
            setEmployeeName('Modo Offline');
         } else {
            setLinked(false);
+           setEmployeeOptions([]);
+           setSelectedEmployeeId('');
+           setRequiresEmployeeSelection(false);
         }
         setLoading(false);
         return;
       }
 
       setLinked(true);
-      setEmployeeName(verification.employeeName || '');
+      const needsEmployee = Boolean(verification.requiresEmployeeSelection);
+      setRequiresEmployeeSelection(needsEmployee);
 
-      const state = await fetchCurrentState(token);
+      let activeEmployeeId = verification.employeeId || '';
+      let activeEmployeeName = verification.employeeName || '';
+
+      if (needsEmployee) {
+        const employeeResponse = await fetchKioskEmployees(token);
+        const employees = employeeResponse.employees || [];
+        setEmployeeOptions(employees);
+
+        if (employees.length > 0) {
+          activeEmployeeId = employees[0].id;
+          activeEmployeeName = employees[0].full_name;
+        } else {
+          activeEmployeeName = 'Sin empleados disponibles';
+        }
+      } else {
+        setEmployeeOptions([]);
+      }
+
+      setSelectedEmployeeId(activeEmployeeId);
+      setEmployeeName(activeEmployeeName || '');
+
+      const state = await fetchCurrentState(token, activeEmployeeId);
       setCurrentAction(state.action);
       
       const pending = await getPendingSyncCount();
@@ -88,6 +120,19 @@ export default function AttendanceScreen() {
       setLinked(false);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleEmployeeSelect(employee) {
+    setSelectedEmployeeId(employee.id);
+    setEmployeeName(employee.full_name);
+
+    try {
+      const token = await getDeviceToken();
+      const state = await fetchCurrentState(token, employee.id);
+      setCurrentAction(state.action);
+    } catch (error) {
+      console.error('[Attendance] Error al cambiar empleado:', error);
     }
   }
 
@@ -116,6 +161,11 @@ export default function AttendanceScreen() {
   async function handleTakePicture() {
     if (isProcessing) return;
 
+    if (requiresEmployeeSelection && !selectedEmployeeId) {
+      Alert.alert('Seleccione un empleado', 'Debe elegir un empleado antes de marcar asistencia.');
+      return;
+    }
+
     setIsProcessing(true);
 
     try {
@@ -135,7 +185,7 @@ export default function AttendanceScreen() {
 
       // Enviar al backend
       const token = await getDeviceToken();
-      const result = await sendAttendance(photoBase64, currentAction, token);
+      const result = await sendAttendance(photoBase64, currentAction, token, selectedEmployeeId);
 
       if (result.success) {
         const actionLabel = currentAction === 'check_in' ? 'Ingreso' : 'Salida';
@@ -153,10 +203,15 @@ export default function AttendanceScreen() {
           setPendingSyncCount(pending);
         }
 
-        // Alternar acción para la próxima vez
-        setCurrentAction((prev) =>
-          prev === 'check_in' ? 'check_out' : 'check_in'
-        );
+        // Actualizar la proxima accion tras confirmar la marcacion.
+        if (result.offline) {
+          setCurrentAction((prev) =>
+            prev === 'check_in' ? 'check_out' : 'check_in'
+          );
+        } else {
+          const state = await fetchCurrentState(token, selectedEmployeeId);
+          setCurrentAction(state.action);
+        }
       } else {
         Alert.alert('Error', result.error || 'No se pudo registrar la asistencia.');
       }
@@ -268,6 +323,7 @@ export default function AttendanceScreen() {
   const buttonColor = isCheckIn ? Colors.checkIn : Colors.checkOut;
   const buttonLabel = isCheckIn ? 'MARCAR INGRESO' : 'MARCAR SALIDA';
   const buttonIcon = isCheckIn ? 'log-in-outline' : 'log-out-outline';
+  const actionDisabled = isProcessing || (requiresEmployeeSelection && !selectedEmployeeId);
 
   return (
     <View style={styles.container}>
@@ -290,6 +346,50 @@ export default function AttendanceScreen() {
             : 'Posiciona tu rostro y marca tu salida'}
         </Text>
 
+        {requiresEmployeeSelection && (
+          <View style={styles.employeeSelector}>
+            <Text style={styles.employeeSelectorLabel}>Empleado</Text>
+            {employeeOptions.length > 0 ? (
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                style={styles.employeeList}
+                contentContainerStyle={styles.employeeListContent}
+              >
+                {employeeOptions.map((employee) => {
+                  const isSelected = employee.id === selectedEmployeeId;
+
+                  return (
+                    <TouchableOpacity
+                      key={employee.id}
+                      style={[
+                        styles.employeeChip,
+                        isSelected && styles.employeeChipActive,
+                      ]}
+                      onPress={() => handleEmployeeSelect(employee)}
+                      activeOpacity={0.8}
+                    >
+                      <Text
+                        style={[
+                          styles.employeeChipText,
+                          isSelected && styles.employeeChipTextActive,
+                        ]}
+                        numberOfLines={1}
+                      >
+                        {employee.full_name}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            ) : (
+              <Text style={styles.employeeSelectorEmpty}>
+                No hay empleados activos para esta sede.
+              </Text>
+            )}
+          </View>
+        )}
+
         {pendingSyncCount > 0 && (
           <View style={styles.syncIndicator}>
             <Ionicons name="cloud-offline-outline" size={16} color={Colors.warning} />
@@ -299,7 +399,7 @@ export default function AttendanceScreen() {
           </View>
         )}
 
-        {linked && (
+        {linked && !requiresEmployeeSelection && (
           <TouchableOpacity 
             style={styles.summaryButton} 
             onPress={() => setShowSummary(true)}
@@ -318,9 +418,13 @@ export default function AttendanceScreen() {
       {/* Botón de acción en la parte inferior */}
       <View style={styles.bottomBar}>
         <TouchableOpacity
-          style={[styles.actionButton, { backgroundColor: buttonColor }]}
+          style={[
+            styles.actionButton,
+            { backgroundColor: buttonColor },
+            actionDisabled && styles.actionButtonDisabled,
+          ]}
           onPress={handleTakePicture}
-          disabled={isProcessing}
+          disabled={actionDisabled}
           activeOpacity={0.8}
         >
           {isProcessing ? (
@@ -386,6 +490,56 @@ const styles = StyleSheet.create({
   instructionText: {
     fontSize: 15,
     color: 'rgba(255,255,255,0.8)',
+    textAlign: 'center',
+  },
+  employeeSelector: {
+    width: '100%',
+    marginTop: 14,
+    alignItems: 'center',
+  },
+  employeeSelectorLabel: {
+    color: 'rgba(255,255,255,0.72)',
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  employeeList: {
+    width: '100%',
+    maxHeight: 42,
+  },
+  employeeListContent: {
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  employeeChip: {
+    minHeight: 38,
+    maxWidth: 180,
+    borderRadius: 19,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+    backgroundColor: 'rgba(0, 0, 0, 0.25)',
+    paddingHorizontal: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 4,
+  },
+  employeeChipActive: {
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    borderColor: 'rgba(255, 255, 255, 0.92)',
+  },
+  employeeChipText: {
+    color: Colors.textLight,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  employeeChipTextActive: {
+    color: Colors.textPrimary,
+  },
+  employeeSelectorEmpty: {
+    color: Colors.warning || '#FF9800',
+    fontSize: 13,
+    fontWeight: '700',
     textAlign: 'center',
   },
   syncIndicator: {
@@ -460,6 +614,9 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.35,
     shadowRadius: 10,
     elevation: 10,
+  },
+  actionButtonDisabled: {
+    opacity: 0.55,
   },
   actionButtonText: {
     color: Colors.textLight,

@@ -1,13 +1,13 @@
 from flask import Blueprint, request, jsonify
 import hashlib
-from utils.db import query_one, query_all, execute
+from utils.db import query_one, query_all
 from services.biometrics import verify_face
 
 attendance_bp = Blueprint('attendance', __name__)
 
 
-def _get_employee_from_token(token):
-    """Helper: obtiene employee_id y device_id a partir del device_token (hashed)."""
+def _get_device_from_token(token):
+    """Return the active device context for a raw device token."""
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     return query_one(
         """
@@ -20,20 +20,115 @@ def _get_employee_from_token(token):
     )
 
 
-@attendance_bp.route('/attendance/state', methods=['GET'])
-def get_attendance_state():
-    """Devuelve la próxima acción esperada (check_in o check_out)."""
+def _resolve_employee_id(device, requested_employee_id=None):
+    """Resolve the employee for personal devices or shared kiosks."""
+    if device.get('employee_id'):
+        return str(device['employee_id'])
+
+    if not requested_employee_id:
+        return None
+
+    if device.get('building_id'):
+        employee = query_one(
+            """
+            SELECT e.id
+              FROM employees e
+             WHERE e.id = %s
+               AND e.status = 'active'
+               AND (
+                    e.primary_building_id = %s
+                    OR EXISTS (
+                        SELECT 1
+                          FROM schedule_assignments sa
+                         WHERE sa.employee_id = e.id
+                           AND sa.building_id = %s
+                           AND sa.valid_to IS NULL
+                    )
+               )
+            """,
+            (requested_employee_id, device['building_id'], device['building_id'])
+        )
+    else:
+        employee = query_one(
+            "SELECT id FROM employees WHERE id = %s AND status = 'active'",
+            (requested_employee_id,)
+        )
+
+    return str(employee['id']) if employee else None
+
+
+@attendance_bp.route('/attendance/employees', methods=['GET'])
+def get_attendance_employees():
+    """List active employees available to the linked device or shared kiosk."""
     token = request.headers.get('X-Device-Token')
 
     if not token:
         return jsonify({'error': 'X-Device-Token header es requerido'}), 401
 
     try:
-        device = _get_employee_from_token(token)
+        device = _get_device_from_token(token)
         if not device:
-            return jsonify({'error': 'Dispositivo no válido'}), 401
+            return jsonify({'error': 'Dispositivo no valido'}), 401
 
-        # Buscar el último registro de HOY para este empleado
+        if device.get('employee_id'):
+            rows = query_all(
+                """
+                SELECT id, full_name
+                  FROM employees
+                 WHERE id = %s AND status = 'active'
+                 ORDER BY full_name ASC
+                """,
+                (device['employee_id'],)
+            )
+        else:
+            rows = query_all(
+                """
+                SELECT DISTINCT e.id, e.full_name
+                  FROM employees e
+                  LEFT JOIN schedule_assignments sa
+                    ON sa.employee_id = e.id
+                   AND sa.building_id = %s
+                   AND sa.valid_to IS NULL
+                 WHERE e.status = 'active'
+                   AND (e.primary_building_id = %s OR sa.id IS NOT NULL)
+                 ORDER BY e.full_name ASC
+                """,
+                (device['building_id'], device['building_id'])
+            )
+
+        return jsonify({
+            'employees': [
+                {'id': str(row['id']), 'full_name': row['full_name']}
+                for row in rows
+            ]
+        }), 200
+    except Exception as e:
+        print(f'[attendance] Error en get_attendance_employees: {e}')
+        return jsonify({'error': str(e)}), 500
+
+
+@attendance_bp.route('/attendance/state', methods=['GET'])
+def get_attendance_state():
+    """Return the next expected action for the selected employee."""
+    token = request.headers.get('X-Device-Token')
+
+    if not token:
+        return jsonify({'error': 'X-Device-Token header es requerido'}), 401
+
+    try:
+        device = _get_device_from_token(token)
+        if not device:
+            return jsonify({'error': 'Dispositivo no valido'}), 401
+
+        requested_employee_id = request.args.get('employee_id') or request.args.get('employeeId')
+        employee_id = _resolve_employee_id(device, requested_employee_id)
+        if not employee_id:
+            return jsonify({
+                'action': 'check_in',
+                'lastRecord': None,
+                'requires_employee': True
+            }), 200
+
         last = query_one(
             """
             SELECT punch_type, punch_time
@@ -43,14 +138,13 @@ def get_attendance_state():
              ORDER BY punch_time DESC
              LIMIT 1
             """,
-            (device['employee_id'],)
+            (employee_id,)
         )
 
         if not last:
             return jsonify({'action': 'check_in', 'lastRecord': None}), 200
 
-        # Si el último fue in → le toca out, y viceversa
-        next_action = 'out' if last['punch_type'] == 'in' else 'in'
+        next_action = 'check_out' if last['punch_type'] == 'in' else 'check_in'
         return jsonify({
             'action': next_action,
             'lastRecord': last['punch_time'].isoformat() if last['punch_time'] else None,
@@ -63,7 +157,7 @@ def get_attendance_state():
 
 @attendance_bp.route('/attendance/register', methods=['POST'])
 def register_attendance():
-    """Registra un ingreso o salida en attendance_logs."""
+    """Register an in/out punch after device, employee, and biometric validation."""
     token = request.headers.get('X-Device-Token')
 
     if not token:
@@ -74,70 +168,76 @@ def register_attendance():
     if not data or 'action_type' not in data:
         return jsonify({'error': 'action_type es requerido'}), 400
 
+    action_aliases = {
+        'check_in': 'in',
+        'in': 'in',
+        'check_out': 'out',
+        'out': 'out',
+    }
     action_type = data['action_type']
 
-    if action_type not in ('check_in', 'check_out'):
-        return jsonify({'error': 'action_type inválido'}), 400
+    if action_type not in action_aliases:
+        return jsonify({'error': 'action_type invalido'}), 400
 
     try:
-        device = _get_employee_from_token(token)
+        device = _get_device_from_token(token)
         if not device:
-            return jsonify({'success': False, 'error': 'Dispositivo no válido'}), 401
+            return jsonify({'success': False, 'error': 'Dispositivo no valido'}), 401
 
-        # ── Validación Biométrica ──
+        requested_employee_id = data.get('employee_id') or data.get('employeeId')
+        employee_id = _resolve_employee_id(device, requested_employee_id)
+        if not employee_id:
+            return jsonify({
+                'success': False,
+                'requires_employee': True,
+                'error': 'employee_id es requerido para kioscos compartidos.'
+            }), 400
+
         photo_base64 = data.get('photo')
-        
-        # P0: Rechazar si no hay foto
         if not photo_base64:
             return jsonify({
                 'success': False,
-                'error': 'La fotografía es obligatoria para registrar asistencia.'
+                'error': 'La fotografia es obligatoria para registrar asistencia.'
             }), 400
 
-        biometric_result = verify_face(photo_base64, device['employee_id'])
-
-        # Aunque el match falle, guardamos el punch para auditoría,
-        # pero informamos del fallo si no hay match.
+        biometric_result = verify_face(photo_base64, employee_id)
         match = biometric_result.get('match', False)
         bio_status = biometric_result.get('status', 'failed')
         bio_provider = biometric_result.get('provider', 'none')
         confidence = biometric_result.get('confidence', 0)
 
-        punch_type = 'in' if action_type in ('check_in', 'in') else 'out'
-        client_uuid = data.get('client_uuid') # Para idempotencia
-        offline_sync = data.get('offline_sync', False)
-        # Si es offline_sync, el cliente envía su propio punch_time (ISO string)
-        punch_time = data.get('punch_time') 
+        if not match:
+            return jsonify({
+                'success': False,
+                'error': 'Validacion biometrica fallida o no disponible.',
+                'biometric_status': bio_status
+            }), 401
 
-        # ── Inserción en DB ──
+        punch_type = action_aliases[action_type]
+        client_uuid = data.get('client_uuid')
+        offline_sync = data.get('offline_sync', False)
+        punch_time = data.get('punch_time')
+
         from utils.db import tx
         with tx() as (conn, cur):
             cur.execute(
                 """
                 INSERT INTO raw_punches (
-                    employee_id, device_id, punch_time, punch_type, 
+                    employee_id, device_id, punch_time, punch_type,
                     confidence_score, biometric_status, biometric_provider,
                     offline_sync, client_uuid
                 )
                 VALUES (%s, %s, COALESCE(%s, NOW()), %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (client_uuid) DO UPDATE SET created_at = EXCLUDED.created_at -- Idempotencia
+                ON CONFLICT (client_uuid) DO UPDATE SET created_at = EXCLUDED.created_at
                 RETURNING id, punch_type, punch_time
                 """,
                 (
-                    device['employee_id'], device['device_id'], punch_time, punch_type, 
+                    employee_id, device['device_id'], punch_time, punch_type,
                     confidence, bio_status, bio_provider,
                     offline_sync, client_uuid
                 )
             )
             row = cur.fetchone()
-
-        if not match:
-            return jsonify({
-                'success': False,
-                'error': 'Validación biométrica fallida o no disponible.',
-                'biometric_status': bio_status,
-                'record_id': str(row['id'])
-            }), 401
 
         return jsonify({
             'success': True,
@@ -157,19 +257,25 @@ def register_attendance():
 
 @attendance_bp.route('/attendance/summary', methods=['GET'])
 def get_employee_summary():
-    """Retorna un resumen de las últimas 7 jornadas para el empleado vinculado."""
+    """Return a 7-day summary for a personal device or selected kiosk employee."""
     token = request.headers.get('X-Device-Token')
     if not token:
         return jsonify({'error': 'X-Device-Token header es requerido'}), 401
 
     try:
-        device = _get_employee_from_token(token)
+        device = _get_device_from_token(token)
         if not device:
-            return jsonify({'error': 'Dispositivo no válido'}), 401
+            return jsonify({'error': 'Dispositivo no valido'}), 401
 
-        employee_id = device['employee_id']
+        requested_employee_id = request.args.get('employee_id') or request.args.get('employeeId')
+        employee_id = _resolve_employee_id(device, requested_employee_id)
+        if not employee_id:
+            return jsonify({
+                'success': False,
+                'requires_employee': True,
+                'error': 'employee_id es requerido para kioscos compartidos.'
+            }), 400
 
-        # Obtener las últimas 7 jornadas procesadas
         timesheets = query_all(
             """
             SELECT logical_date, status, regular_minutes, overtime_minutes, deficit_minutes
@@ -188,14 +294,18 @@ def get_employee_summary():
         for ts in timesheets:
             total_worked_min = (ts['regular_minutes'] or 0) + (ts['overtime_minutes'] or 0)
             hours = total_worked_min / 60.0
-            
-            # Formatear el status para el usuario final
+
             user_status = ts['status']
-            if ts['status'] == 'perfect': user_status = 'Completo'
-            elif ts['status'] == 'overtime': user_status = 'Horas Extra'
-            elif ts['status'] == 'deficit': user_status = 'Incompleto'
-            elif ts['status'] == 'absent': user_status = 'Falta'
-            elif ts['status'] == 'resolved': user_status = 'Justificado'
+            if ts['status'] == 'perfect':
+                user_status = 'Completo'
+            elif ts['status'] == 'overtime':
+                user_status = 'Horas Extra'
+            elif ts['status'] == 'deficit':
+                user_status = 'Incompleto'
+            elif ts['status'] == 'absent':
+                user_status = 'Falta'
+            elif ts['status'] == 'resolved':
+                user_status = 'Justificado'
 
             days_detail.append({
                 'date': ts['logical_date'].isoformat(),

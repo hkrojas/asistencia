@@ -47,9 +47,10 @@ def get_weekly_schedule():
                    to_char(s.start_time, 'HH24:MI') AS start_time,
                    to_char(s.end_time, 'HH24:MI')   AS end_time,
                    b.name                           AS building_name
-              FROM schedules s
+              FROM schedule_assignments s
               LEFT JOIN buildings b ON b.id = s.building_id
              WHERE s.employee_id = %s
+               AND s.valid_to IS NULL
              ORDER BY s.day_of_week
             """,
             (device['employee_id'],)

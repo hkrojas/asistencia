@@ -20,10 +20,6 @@ const Buildings = () => {
   const [showPairingModal, setShowPairingModal] = useState(false);
   const [selectedBuilding, setSelectedBuilding] = useState(null);
 
-  useEffect(() => {
-    fetchBuildings();
-  }, []);
-
   const fetchBuildings = async () => {
     setLoading(true);
     try {
@@ -47,6 +43,7 @@ const Buildings = () => {
       setFormData({ name: '', address: '' });
       fetchBuildings();
     } catch (error) {
+      console.error('Error creating building:', error);
       alert('Error al crear la sede');
     } finally {
       setIsSubmitting(false);
@@ -60,9 +57,35 @@ const Buildings = () => {
       setPairingCode(response.data.code);
       setShowPairingModal(true);
     } catch (error) {
+      console.error('Error generating pairing code:', error);
       alert('Error al generar código de emparejamiento');
     }
   };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadInitialBuildings = async () => {
+      try {
+        const response = await getBuildings();
+        if (!cancelled) {
+          setBuildings(response.data);
+        }
+      } catch (error) {
+        console.error('Error fetching buildings:', error);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadInitialBuildings();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filteredBuildings = buildings.filter(b => 
     b.name.toLowerCase().includes(searchTerm.toLowerCase()) ||

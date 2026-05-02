@@ -51,6 +51,16 @@ def process_timesheet(employee_id, logical_date):
                 WHERE employee_id = %s AND logical_date = %s
             """, (employee_id, logical_date))
 
+            resolutions = query_all("""
+                SELECT exception_type
+                FROM time_exceptions
+                WHERE employee_id = %s AND date = %s
+            """, (employee_id, logical_date))
+            has_time_resolution = any(
+                r['exception_type'] in ('overtime', 'leave_early', 'medical')
+                for r in resolutions
+            )
+
             # 3. Obtener Marcaciones
             start_search = datetime.combine(logical_date, datetime.min.time())
             end_search = start_search + timedelta(hours=36 if schedule['is_overnight'] else 24)
@@ -129,10 +139,16 @@ def process_timesheet(employee_id, logical_date):
 
             # Horas Extra y Déficit
             total_expected_mins = int((expected_end - expected_start).total_seconds() / 60)
+            overtime_minutes = 0
             
             # Sobreescribir si hay permiso
             if leave:
-                deficit_minutes = 0
+                if leave.get('is_paid', True):
+                    regular_minutes = total_expected_mins
+                    deficit_minutes = 0
+                else:
+                    regular_minutes = 0
+                    deficit_minutes = total_expected_mins
                 status = 'resolved'
             else:
                 deficit_minutes = max(0, total_expected_mins - regular_minutes)
@@ -143,7 +159,7 @@ def process_timesheet(employee_id, logical_date):
                 if "orphan_in" in anomaly_flags or "orphan_out" in anomaly_flags:
                     status = 'incomplete'
                 elif deficit_minutes > 0 or overtime_minutes > 0:
-                    status = 'exception'
+                    status = 'resolved' if has_time_resolution else 'exception'
                 else:
                     status = 'perfect'
 
